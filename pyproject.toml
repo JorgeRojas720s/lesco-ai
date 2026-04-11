@@ -5,8 +5,9 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "fastapi>=0.135.3",
-    "mediapipe>=0.10.33",
+    "fastapi[standard]>=0.135.3",
+    "mediapipe==0.10.14",
+    "numpy>=2.2.6",
     "opencv-python>=4.13.0.92",
     "uvicorn>=0.44.0",
 ]
