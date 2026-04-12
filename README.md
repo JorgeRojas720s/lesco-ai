@@ -21,6 +21,9 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
+```
+source $HOME/.local/bin/env
+```
 
 Verificá que quedó instalado:
 ```bash
