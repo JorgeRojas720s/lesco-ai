@@ -1,6 +1,7 @@
 import cv2
 from typing import Generator
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +18,13 @@ class Camera:
 
     def open(self) -> None:
         """Abre la cámara y configura resolución/FPS."""
-        self._cap = cv2.VideoCapture(self.camera_index)
+        if os.name == "nt":
+            self._cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
+        else:
+            self._cap = cv2.VideoCapture(self.camera_index)
+
+        if not self._cap.isOpened():
+            self._cap = cv2.VideoCapture(self.camera_index)
 
         if not self._cap.isOpened():
             raise RuntimeError(f"No se pudo abrir la cámara con índice {self.camera_index}")
