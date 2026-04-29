@@ -4,7 +4,10 @@
 
 This is a Python 3.10+ project managed with `uv`. Application code lives in `app/`.
 
-- `app/main.py` starts the webcam hand-tracking demo.
+- `app/main.py` starts the real-time neural sign recognizer.
+- `app/cli/` contains command-line entry points for collecting data, inspecting datasets, training, and recognition.
+- `app/ml/` contains machine-learning classifiers and related model code.
+- `app/storage/` contains the HDF5 dataset persistence layer.
 - `app/vision/` contains camera capture, frame preprocessing, MediaPipe hand detection, and landmark extraction.
 - `app/utils/` contains image drawing helpers.
 - `app/api/`, `app/core/`, `app/models/`, and `app/services/` are placeholders for future API, domain, model, and service layers.
@@ -15,7 +18,10 @@ There is no test directory yet. Add tests under `tests/` mirroring the source la
 ## Build, Test, and Development Commands
 
 - `uv sync` installs dependencies from `pyproject.toml` and `uv.lock` into the local virtual environment.
-- `uv run python -m app.main` runs the OpenCV webcam demo. Press `q` in the video window to exit.
+- `uv run python -m app.main` runs the neural webcam recognizer. Press `q` in the video window to exit.
+- `uv run python -m app.cli.collect_data --label HOLA` records sign samples into the HDF5 dataset.
+- `uv run python -m app.cli.inspect_dataset data/signs_dataset.h5` summarizes the collected dataset.
+- `uv run python -m app.cli.train_neural_network --dataset data/signs_dataset.h5` trains the neural classifier.
 - `uv add <package>` adds a runtime dependency and updates project metadata.
 - `uv lock` refreshes the lockfile after dependency changes.
 

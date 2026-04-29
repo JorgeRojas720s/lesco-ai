@@ -11,6 +11,9 @@ __pycache__/
 # Logs
 *.log
 
+# Model artifacts
+models/*.npz
+
 # OS
 .DS_Store
 Thumbs.db

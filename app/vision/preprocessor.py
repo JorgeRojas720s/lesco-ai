@@ -1,5 +1,20 @@
+"""
+app/vision/preprocessor.py
+==========================
+
+Funcion
+-------
+Prepara los frames de la camara antes de pasarlos al detector de manos.
+
+Notas
+-----
+Puede aplicar espejo horizontal, redimensionamiento y mejora de contraste
+segun la configuracion usada al crear el preprocesador.
+"""
+
 import cv2
 import numpy as np
+
 
 class Preprocessor:
     """

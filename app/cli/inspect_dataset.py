@@ -1,41 +1,32 @@
 """
-app/tools/inspect_dataset.py
-=============================
-CLI tool to inspect, visualise, and verify a LESCO HDF5 dataset.
+app/cli/inspect_dataset.py
+==========================
 
-Why .npz looks like gibberish in a text editor
------------------------------------------------
-.npz files are ZIP archives that contain NumPy .npy files, which start
-with a binary magic string (\\x93NUMPY) and store raw IEEE 754 floats.
-A text editor tries to decode these bytes as UTF-8 or ASCII, which fails
-and shows replacement characters or mojibake.  This is expected — binary
-formats are *not* meant to be human-readable.
+Funcion
+-------
+Inspecciona un dataset HDF5 de senas LESCO para revisar muestras,
+etiquetas, calidad de datos y ejemplos guardados.
 
-HDF5 (.h5) is also binary, but dedicated tools exist:
+Comandos
+--------
+uv run python -m app.cli.inspect_dataset data/signs_dataset.h5
+    Muestra un resumen general del dataset.
 
-    h5ls  data/signs_dataset.h5             # list groups and datasets
-    h5dump data/signs_dataset.h5            # dump everything as ASCII
-    HDFView (GUI)                           # free download from HDF Group
+uv run python -m app.cli.inspect_dataset data/signs_dataset.h5 --label HOLA
+    Muestra estadisticas de una etiqueta especifica.
 
-This script provides a Python-native alternative so you can verify your
-recordings without leaving the terminal.
+uv run python -m app.cli.inspect_dataset data/signs_dataset.h5 --plot 3
+    Grafica la trayectoria de landmarks de la muestra indicada.
 
-Usage
+uv run python -m app.cli.inspect_dataset data/signs_dataset.h5 --export 0
+    Exporta una muestra a CSV para inspeccion externa.
+
+uv run python -m app.cli.inspect_dataset data/signs_dataset.h5 --delete-label HOLA
+    Elimina todas las muestras de una etiqueta.
+
+Notas
 -----
-    # Quick summary
-    uv run python -m app.tools.inspect_dataset data/signs_dataset.h5
-
-    # Show the stats for a specific label
-    uv run python -m app.tools.inspect_dataset data/signs_dataset.h5 --label HOLA
-
-    # Plot the landmark trajectory for sample index 3
-    uv run python -m app.tools.inspect_dataset data/signs_dataset.h5 --plot 3
-
-    # Export sample 0 to CSV (for inspection in Excel / LibreOffice)
-    uv run python -m app.tools.inspect_dataset data/signs_dataset.h5 --export 0
-
-    # Delete all samples for a label (if you need to re-record)
-    uv run python -m app.tools.inspect_dataset data/signs_dataset.h5 --delete-label HOLA
+Usalo para verificar el dataset antes de entrenar o reconocer senas.
 """
 
 from __future__ import annotations
@@ -112,7 +103,7 @@ def cmd_summary(path: Path) -> None:
         print(f"    Inf       : {inf_count}")
         print(f"    Muestras todo-cero : {zero_rows}")
         if nan_count == 0 and inf_count == 0:
-            print("    ✓ Sin valores inválidos detectados")
+            print("    OK: Sin valores invalidos detectados")
         print()
 
 

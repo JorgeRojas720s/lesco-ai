@@ -1,42 +1,27 @@
 """
-app/recognize.py
-================
-Reconocedor en tiempo real de señas LESCO usando DTW (Dynamic Time Warping).
+app/cli/recognize.py
+====================
 
-Cómo funciona
--------------
-1.  Al iniciar, carga el dataset HDF5 y calcula un *template* por etiqueta:
-    el promedio de todas las muestras de esa etiqueta (ya normalizadas a 60
-    frames).  Con pocas muestras, el promedio es una estimación razonable del
-    "movimiento típico" de esa seña.
+Funcion
+-------
+Reconoce senas en tiempo real con la webcam comparando la secuencia capturada
+contra templates del dataset mediante DTW.
 
-2.  La cámara corre en bucle.  Un **detector de movimiento** monitorea la
-    velocidad de los landmarks frame a frame.  Cuando la velocidad supera
-    un umbral → la seña está comenzando (estado SIGNING).
+Comandos
+--------
+uv run python -m app.cli.recognize --dataset data/signs_dataset.h5
+    Ejecuta el reconocedor con el dataset principal.
 
-3.  Mientras está en SIGNING, los frames se acumulan en un buffer.  Cuando
-    la velocidad cae por debajo del umbral durante N frames seguidos, la seña
-    se considera terminada.
+uv run python -m app.cli.recognize --dataset data/signs_dataset.h5 --motion-threshold 0.04
+    Ajusta la sensibilidad usada para detectar inicio y fin de una sena.
 
-4.  El buffer capturado se remuestrea a 60 frames y se compara contra cada
-    template usando **DTW** (Dynamic Time Warping).  DTW es la elección
-    correcta porque:
-    - Maneja que una persona firme más rápido o más lento que el template.
-    - Encuentra la alineación temporal óptima entre dos secuencias.
-    - No requiere entrenamiento previo.
+uv run python -m app.cli.recognize --dataset data/signs_dataset.h5 --top-k 3
+    Muestra los tres candidatos mas probables en pantalla.
 
-5.  El label con menor distancia DTW gana.  Se calcula una confianza relativa
-    entre el mejor y el segundo lugar.
-
-Uso
----
-    uv run python -m app.recognize --dataset data/signs_dataset.h5
-
-    # Ajustar sensibilidad de detección de movimiento
-    uv run python -m app.recognize --dataset data/signs_dataset.h5 --motion-threshold 0.04
-
-    # Ver todos los candidatos en pantalla
-    uv run python -m app.recognize --dataset data/signs_dataset.h5 --top-k 3
+Notas
+-----
+Este reconocedor no entrena modelos; usa las muestras guardadas como referencia
+y remuestrea cada sena detectada antes de compararla.
 """
 
 from __future__ import annotations
@@ -58,7 +43,7 @@ from app.vision.preprocessor import Preprocessor
 
 # Reutilizamos las mismas funciones que usamos al grabar → garantiza que
 # los features sean idénticos entre entrenamiento e inferencia.
-from app.collect_data import (
+from app.cli.collect_data import (
     FEATURES_PER_FRAME,
     HAND_SLOTS,
     frame_to_features,

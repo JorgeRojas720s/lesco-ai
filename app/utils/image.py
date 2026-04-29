@@ -1,3 +1,18 @@
+"""
+app/utils/image.py
+==================
+
+Funcion
+-------
+Agrupa helpers de dibujo y conversion de imagen usados por la demo y las
+herramientas de vision.
+
+Notas
+-----
+Las funciones trabajan sobre frames BGR de OpenCV y devuelven el frame
+modificado para permitir encadenar overlays.
+"""
+
 import cv2
 import numpy as np
 from app.vision.hand_detector import DetectionResult

@@ -1,3 +1,18 @@
+"""
+app/vision/hand_detector.py
+===========================
+
+Funcion
+-------
+Detecta manos en frames BGR usando MediaPipe Hands y devuelve landmarks en
+pixeles y coordenadas normalizadas.
+
+Notas
+-----
+Define las estructuras `DetectedHand` y `DetectionResult`, ademas de helpers
+para dibujar landmarks y conexiones sobre el frame.
+"""
+
 import mediapipe as mp
 import cv2
 import logging

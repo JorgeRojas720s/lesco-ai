@@ -1,8 +1,16 @@
 """
 app/vision/camera.py
 ====================
-Handles webcam capture with retry logic for dropped frames and graceful
-degradation on camera lag.
+
+Funcion
+-------
+Encapsula la captura de video desde la webcam y entrega frames BGR al resto
+del pipeline.
+
+Notas
+-----
+Tolera fallos temporales de lectura, registra frames perdidos y permite usar
+la camara con context manager para cerrarla correctamente.
 """
 
 from __future__ import annotations

@@ -1,63 +1,17 @@
 """
 app/storage/dataset.py
 ======================
-HDF5-backed dataset for LESCO landmark sequences.
 
-Why HDF5 instead of .npz?
---------------------------
-The v1 script used np.savez_compressed(), which has a fatal scaling problem:
-to *append* one new sample it must:
-    1. load the entire .npz into RAM,
-    2. concatenate the new sample in Python,
-    3. write the whole file back to disk.
+Funcion
+-------
+Administra el dataset HDF5 donde se guardan las secuencias de landmarks,
+sus etiquetas y la duracion original de cada toma.
 
-That is O(N) I/O per sample write.  With 500 samples × 60 frames × 126
-features this is manageable, but it degrades visibly beyond ~1 000 samples and
-corrupts the file if the process is killed mid-write.
-
-HDF5 (via h5py) solves all of that:
-
-┌─────────────────────────────────────────────────────────────────────┐
-│  Feature                  .npz            HDF5 (.h5)               │
-│  ─────────────────────── ──────────────── ─────────────────────    │
-│  Append one sample        Reload full     O(1) resize + write       │
-│  Inspect without Python   Gibberish       h5dump / HDFView / h5ls   │
-│  Partial read             Load all        dataset[i:j]              │
-│  Labels (strings)         Object array    Variable-length UTF-8     │
-│  Metadata                 Extra arrays    File/dataset attributes    │
-│  Compression              zlib (whole)    Per-chunk gzip / lzf      │
-│  PyTorch Dataset          np.load()       h5py.File stays open      │
-│  Keras sequence           np.load()       h5py.File stays open      │
-│  Corruption on crash      Yes             No (HDF5 journaling)      │
-└─────────────────────────────────────────────────────────────────────┘
-
-File schema
------------
-    /X                float32  (N, sequence_length, features_per_frame)
-    /labels           bytes    (N,)   – UTF-8 encoded label strings
-    /original_lengths int32    (N,)   – raw frame count before resampling
-
-    File attributes:
-        version           str   "2.0"
-        sequence_length   int
-        features_per_frame int
-        created_at        str   ISO-8601 timestamp
-        hand_slot_right   int   0
-        hand_slot_left    int   1
-
-Usage
+Notas
 -----
-    from app.storage.dataset import LESCODataset
-
-    ds = LESCODataset("data/signs_dataset.h5", sequence_length=60, features_per_frame=126)
-    total = ds.append(label="HOLA", sequence=sample_array, original_length=47)
-    ds.close()
-
-    # Later, for training:
-    ds = LESCODataset("data/signs_dataset.h5", sequence_length=60, features_per_frame=126)
-    info = ds.info()          # returns a dict with stats
-    X, y = ds.load_all()      # numpy arrays ready for model.fit()
-    ds.close()
+Crea y valida el esquema del archivo. Los datasets principales son `/X`,
+`/labels` y `/original_lengths`; `append()` agrega muestras sin reescribir
+todo el archivo.
 """
 
 from __future__ import annotations

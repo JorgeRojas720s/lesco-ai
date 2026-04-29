@@ -1,37 +1,26 @@
 """
-LESCO-AI — Data Collection Script  (v2)
-========================================
-Captures MediaPipe hand landmarks and stores them in an HDF5 dataset
-optimised for LSTM/GRU training.
+app/cli/collect_data.py
+=======================
 
-Key improvements over v1
--------------------------
-* **State machine** IDLE → COUNTDOWN → RECORDING → SAVING instead of raw
-  boolean flags, which prevents accidental double-presses.
-* **Semantic hand slots** – slot 0 = Right hand, slot 1 = Left hand.
-  Missing hands are always zeros at the SAME indices, giving the model a
-  consistent spatial representation regardless of how many hands appear.
-* **Gap-aware resampling** – frames where no landmark was detected are
-  excluded from the temporal anchor points so that the interpolation
-  follows only *real* motion data, not zeros.
-* **Visual countdown** before each take so you can position your hands.
-* **Pulsing REC indicator** so you always know the script is capturing.
-* **HDF5 storage** (via h5py) with true dataset append – no full-file
-  reload on every sample, built-in gzip compression, and metadata stored
-  as attributes.  See app/storage/dataset.py for the schema.
-* **Graceful exit** – a try/finally guarantees the HDF5 file is flushed
-  and closed even on Ctrl-C or camera failure.
+Funcion
+-------
+Captura landmarks de manos con la webcam, normaliza cada frame y guarda
+muestras de senas en un dataset HDF5.
 
-Usage
+Comandos
+--------
+uv run python -m app.cli.collect_data --label HOLA
+    Graba muestras para la etiqueta HOLA en data/signs_dataset.h5.
+
+uv run python -m app.cli.collect_data --label BUENOS_DIAS --sequence-length 60
+    Graba BUENOS_DIAS y remuestrea cada toma a 60 frames.
+
+uv run python -m app.cli.collect_data --label HOLA --output data/prueba.h5
+    Guarda las muestras en un archivo HDF5 diferente.
+
+Notas
 -----
-    uv run python -m app.collect_data --label HOLA
-    uv run python -m app.collect_data --label BUENOS_DIAS --sequence-length 60
-
-Keys (window or terminal)
---------------------------
-    R  – start countdown then recording
-    S  – stop recording and save the sample
-    Q  – quit without saving the current take
+Teclas durante la captura: R inicia, S guarda la toma actual y Q sale.
 """
 
 from __future__ import annotations

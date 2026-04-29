@@ -1,3 +1,18 @@
+"""
+app/vision/landmark_extractor.py
+================================
+
+Funcion
+-------
+Convierte una mano detectada en features estructuradas para visualizacion o
+modelos: landmarks planos, estado de dedos, bounding box y centro.
+
+Notas
+-----
+El vector `landmarks_flat` contiene 63 valores por mano: 21 puntos por 3
+coordenadas normalizadas.
+"""
+
 import numpy as np
 from dataclasses import dataclass
 from app.vision.hand_detector import DetectedHand, LANDMARK_NAMES
