@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LESCO-AI</title>
+
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="app">
+
+    <div class="hud-top">
+        <div class="logo">LESCO-AI</div>
+        <div class="status" id="status">Esperando...</div>
+    </div>
+
+    <div class="camera-container">
+        <video id="video" autoplay playsinline></video>
+        <canvas id="overlay"></canvas>
+
+        <div class="prediction-box">
+            <div class="prediction-label" id="prediction">
+                ---
+            </div>
+
+            <div class="prediction-confidence" id="confidence">
+                0%
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
