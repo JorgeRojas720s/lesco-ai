@@ -71,6 +71,29 @@ Se abre la camara, detecta tus manos con MediaPipe y usa el modelo entrenado
 
 Presioná `Q` para cerrar la ventana.
 
+## Correr el HUD web (interfaz avanzada)
+
+En vez de la ventana de OpenCV, podés usar el HUD web (`app/frontend`), que
+ofrece barras de confianza, historial de señas, radar de movimiento, overlay de
+landmarks, partículas y FPS. Levantá el servidor:
+
+```bash
+uv run uvicorn app.api.server:app --port 8000
+```
+
+Luego abrí <http://localhost:8000/> y dale permiso a la cámara. El servidor
+reutiliza exactamente el mismo pipeline de reconocimiento que `app.main` (no
+cambia la lógica de detección): el navegador envía frames a `POST /predict` y
+recibe el estado, la velocidad y la predicción para pintar el HUD.
+
+Rutas opcionales por variable de entorno:
+
+```bash
+LESCO_MODEL=models/neural_sign_classifier.npz \
+LESCO_DATASET=data/signs_dataset.h5 \
+uv run uvicorn app.api.server:app --port 8000
+```
+
 ## Entrenar la red neuronal
 
 Primero grabá varias muestras por etiqueta con el recolector:

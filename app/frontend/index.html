@@ -4,35 +4,75 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LESCO-AI</title>
-
     <link rel="stylesheet" href="style.css">
 </head>
-<body>
+<body class="state-waiting">
 
 <div class="app">
 
-    <div class="hud-top">
-        <div class="logo">LESCO-AI</div>
-        <div class="status" id="status">Esperando...</div>
+    <!-- Capa de cámara -->
+    <div class="camera-container">
+        <video id="video" autoplay playsinline muted></video>
+        <canvas id="landmarks" class="layer mirrored"></canvas>
+        <canvas id="particles" class="layer"></canvas>
+        <div class="scanline"></div>
+        <div class="vignette"></div>
     </div>
 
-    <div class="camera-container">
-        <video id="video" autoplay playsinline></video>
-        <canvas id="overlay"></canvas>
+    <!-- Esquinas cyberpunk -->
+    <div class="corner corner--tl"></div>
+    <div class="corner corner--tr"></div>
+    <div class="corner corner--bl"></div>
+    <div class="corner corner--br"></div>
 
-        <div class="prediction-box">
-            <div class="prediction-label" id="prediction">
-                ---
-            </div>
-
-            <div class="prediction-confidence" id="confidence">
-                0%
-            </div>
+    <!-- Barra superior -->
+    <div class="hud-top">
+        <div class="logo">
+            LESCO<span>-AI</span>
+            <div class="logo-sub">NEURAL SIGN RECOGNIZER</div>
         </div>
+        <div class="hud-top__right">
+            <div class="status" id="status">
+                <span class="status-dot"></span>
+                <span id="status-text">Iniciando…</span>
+            </div>
+            <div class="fps" id="fps">-- FPS</div>
+        </div>
+    </div>
+
+    <!-- Panel izquierdo: radar de movimiento -->
+    <div class="panel panel--left">
+        <div class="panel__title">MOVIMIENTO</div>
+        <canvas id="radar" width="200" height="200"></canvas>
+        <div class="radar-readout">
+            <span id="motion-label">EN ESPERA</span>
+        </div>
+    </div>
+
+    <!-- Panel derecho: historial -->
+    <div class="panel panel--right">
+        <div class="panel__title">HISTORIAL</div>
+        <ul class="history" id="history">
+            <li class="history__empty">Sin señas aún</li>
+        </ul>
+    </div>
+
+    <!-- Predicción + barras de confianza -->
+    <div class="prediction-box" id="prediction-box">
+        <div class="prediction-label" id="prediction">---</div>
+        <div class="prediction-confidence">
+            <span id="confidence">0%</span>
+        </div>
+        <div class="confidence-bars" id="confidence-bars"></div>
     </div>
 
 </div>
 
+<!-- MediaPipe Hands (overlay de landmarks, solo navegador) -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/hands.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3/drawing_utils.js" crossorigin="anonymous"></script>
+
+<script src="landmarks.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

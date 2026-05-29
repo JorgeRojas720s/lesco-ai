@@ -1,3 +1,28 @@
+/* ─────────────────────────────────────────────────────────────────────────
+   LESCO-AI · HUD avanzado
+   Tema oscuro dinámico vía variables CSS. El acento cambia según el estado:
+     idle      → cian
+     SIGNING   → ámbar
+     aceptado  → verde
+   ───────────────────────────────────────────────────────────────────────── */
+
+:root {
+    --bg: #05090f;
+    --accent: #00e5ff;
+    --accent-rgb: 0, 229, 255;
+    --glow: rgba(0, 229, 255, 0.55);
+    --text-dim: #9aa7b2;
+    --panel-bg: rgba(6, 14, 22, 0.55);
+    --panel-border: rgba(var(--accent-rgb), 0.35);
+    --font: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    --mono: "SF Mono", "Consolas", "Roboto Mono", monospace;
+}
+
+/* Estado del cuerpo → re-tinta todo el HUD con una transición suave */
+body.state-waiting  { --accent: #00e5ff; --accent-rgb: 0, 229, 255;  --glow: rgba(0,229,255,0.55); }
+body.state-signing  { --accent: #ffb02e; --accent-rgb: 255, 176, 46;  --glow: rgba(255,176,46,0.6); }
+body.state-accepted { --accent: #00ff88; --accent-rgb: 0, 255, 136;  --glow: rgba(0,255,136,0.65); }
+
 * {
     margin: 0;
     padding: 0;
@@ -5,10 +30,11 @@
 }
 
 body {
-    background: #071018;
-    color: white;
-    font-family: Arial, sans-serif;
+    background: var(--bg);
+    color: #fff;
+    font-family: var(--font);
     overflow: hidden;
+    transition: background 0.6s ease;
 }
 
 .app {
@@ -17,27 +43,96 @@ body {
     position: relative;
 }
 
+/* ── Cámara y capas ───────────────────────────────────────────────────── */
+
 .camera-container {
-    width: 100%;
-    height: 100%;
-    position: relative;
+    position: absolute;
+    inset: 0;
 }
 
-video {
+video,
+.layer {
+    position: absolute;
+    inset: 0;
     width: 100%;
     height: 100%;
     object-fit: cover;
+}
+
+video {
+    transform: scaleX(-1); /* espejo natural */
+    background: #000;
+}
+
+.layer {
+    pointer-events: none;
+}
+
+/* El canvas de landmarks se dibuja en coords crudas y se espeja por CSS,
+   igual que el video, para quedar perfectamente alineado. */
+.mirrored {
     transform: scaleX(-1);
 }
 
-#overlay {
+#particles { z-index: 2; }
+#landmarks { z-index: 3; }
+
+/* Viñeta + scanline para ambientar */
+.vignette {
     position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
+    inset: 0;
     pointer-events: none;
+    z-index: 4;
+    background: radial-gradient(ellipse at center,
+        transparent 55%, rgba(0, 0, 0, 0.55) 100%);
 }
+
+.scanline {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 4;
+    opacity: 0.12;
+    background: repeating-linear-gradient(
+        to bottom,
+        rgba(var(--accent-rgb), 0.0) 0px,
+        rgba(var(--accent-rgb), 0.0) 2px,
+        rgba(var(--accent-rgb), 0.6) 3px,
+        rgba(var(--accent-rgb), 0.0) 4px
+    );
+    animation: scan 6s linear infinite;
+}
+
+@keyframes scan {
+    from { background-position-y: 0; }
+    to   { background-position-y: 100vh; }
+}
+
+/* ── Esquinas cyberpunk ───────────────────────────────────────────────── */
+
+.corner {
+    position: absolute;
+    width: 64px;
+    height: 64px;
+    z-index: 9;
+    pointer-events: none;
+    border: 2px solid var(--accent);
+    filter: drop-shadow(0 0 6px var(--glow));
+    transition: border-color 0.6s ease, filter 0.6s ease;
+    animation: cornerPulse 2.8s ease-in-out infinite;
+}
+
+.corner--tl { top: 18px; left: 18px;     border-right: none; border-bottom: none; }
+.corner--tr { top: 18px; right: 18px;    border-left: none;  border-bottom: none; }
+.corner--bl { bottom: 18px; left: 18px;  border-right: none; border-top: none; }
+.corner--br { bottom: 18px; right: 18px; border-left: none;  border-top: none; }
+
+@keyframes cornerPulse {
+    0%, 100% { opacity: 0.55; }
+    50%      { opacity: 1; }
+}
+
+/* ── Barra superior ───────────────────────────────────────────────────── */
 
 .hud-top {
     position: absolute;
@@ -45,62 +140,249 @@ video {
     left: 0;
     width: 100%;
     z-index: 10;
-
     display: flex;
     justify-content: space-between;
-
-    padding: 20px;
-
-    background: linear-gradient(
-        to bottom,
-        rgba(0,0,0,0.8),
-        rgba(0,0,0,0)
-    );
+    align-items: flex-start;
+    padding: 28px 40px;
+    background: linear-gradient(to bottom, rgba(0, 0, 0, 0.75), transparent);
 }
 
 .logo {
-    font-size: 28px;
-    font-weight: bold;
-    color: #00e5ff;
+    font-size: 30px;
+    font-weight: 800;
+    letter-spacing: 2px;
+    color: #fff;
+    text-shadow: 0 0 18px var(--glow);
+}
 
-    text-shadow: 0 0 20px #00e5ff;
+.logo span { color: var(--accent); transition: color 0.6s ease; }
+
+.logo-sub {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 4px;
+    color: var(--text-dim);
+    margin-top: 2px;
+}
+
+.hud-top__right {
+    text-align: right;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 8px;
 }
 
 .status {
-    font-size: 18px;
-    color: #9aa7b2;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 15px;
+    color: var(--text-dim);
+    font-family: var(--mono);
+    letter-spacing: 1px;
 }
+
+.status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 10px var(--glow);
+    animation: blink 1.4s ease-in-out infinite;
+}
+
+@keyframes blink {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.25; }
+}
+
+.fps {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--accent);
+    letter-spacing: 1px;
+    opacity: 0.85;
+}
+
+/* ── Paneles laterales ────────────────────────────────────────────────── */
+
+.panel {
+    position: absolute;
+    z-index: 10;
+    padding: 16px;
+    width: 232px;
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    border-radius: 14px;
+    backdrop-filter: blur(8px);
+    box-shadow: 0 0 24px rgba(0, 0, 0, 0.4), inset 0 0 18px rgba(var(--accent-rgb), 0.05);
+    transition: border-color 0.6s ease;
+}
+
+.panel--left  { left: 40px; top: 50%; transform: translateY(-50%); }
+.panel--right { right: 40px; top: 50%; transform: translateY(-50%); }
+
+.panel__title {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 4px;
+    color: var(--accent);
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--panel-border);
+    transition: color 0.6s ease;
+}
+
+/* Radar */
+#radar {
+    display: block;
+    width: 200px;
+    height: 200px;
+    margin: 0 auto;
+}
+
+.radar-readout {
+    text-align: center;
+    margin-top: 10px;
+    font-family: var(--mono);
+    font-size: 13px;
+    letter-spacing: 2px;
+    color: var(--text-dim);
+}
+
+/* Historial */
+.history {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 320px;
+    overflow: hidden;
+}
+
+.history li {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 9px 12px;
+    border-radius: 8px;
+    background: rgba(var(--accent-rgb), 0.08);
+    border-left: 3px solid var(--accent);
+    font-size: 15px;
+    animation: slideIn 0.35s ease;
+}
+
+.history li .h-time {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-dim);
+}
+
+.history__empty {
+    background: none !important;
+    border-left: none !important;
+    color: var(--text-dim);
+    font-style: italic;
+    justify-content: center !important;
+}
+
+@keyframes slideIn {
+    from { opacity: 0; transform: translateX(20px); }
+    to   { opacity: 1; transform: translateX(0); }
+}
+
+/* ── Caja de predicción + barras de confianza ─────────────────────────── */
 
 .prediction-box {
     position: absolute;
-    bottom: 80px;
+    bottom: 56px;
     left: 50%;
-
     transform: translateX(-50%);
-
+    z-index: 10;
+    min-width: 360px;
+    max-width: 520px;
     text-align: center;
+    padding: 22px 40px 26px;
+    border: 1px solid var(--panel-border);
+    background: rgba(4, 10, 16, 0.55);
+    backdrop-filter: blur(12px);
+    border-radius: 22px;
+    box-shadow: 0 0 40px rgba(0, 0, 0, 0.5), 0 0 26px rgba(var(--accent-rgb), 0.18);
+    transition: border-color 0.6s ease, box-shadow 0.6s ease;
+}
 
-    padding: 20px 40px;
+.prediction-box.pop { animation: pop 0.4s ease; }
 
-    border: 1px solid rgba(0,229,255,0.4);
-
-    background: rgba(0,0,0,0.45);
-
-    backdrop-filter: blur(10px);
-
-    border-radius: 20px;
+@keyframes pop {
+    0%   { transform: translateX(-50%) scale(1); }
+    40%  { transform: translateX(-50%) scale(1.06); }
+    100% { transform: translateX(-50%) scale(1); }
 }
 
 .prediction-label {
-    font-size: 56px;
-    font-weight: bold;
-    color: #00ff88;
-
-    text-shadow: 0 0 20px #00ff88;
+    font-size: 54px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    color: var(--accent);
+    text-shadow: 0 0 22px var(--glow);
+    transition: color 0.6s ease, text-shadow 0.6s ease;
+    line-height: 1.1;
 }
 
 .prediction-confidence {
-    margin-top: 10px;
-    font-size: 20px;
-    color: #a5b7c2;
+    margin-top: 6px;
+    font-family: var(--mono);
+    font-size: 18px;
+    color: var(--text-dim);
+}
+
+.confidence-bars {
+    margin-top: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+}
+
+.cbar {
+    display: grid;
+    grid-template-columns: 92px 1fr 44px;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+}
+
+.cbar__label {
+    text-align: left;
+    color: #d7e2ea;
+    font-family: var(--mono);
+    letter-spacing: 1px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.cbar__track {
+    height: 8px;
+    border-radius: 5px;
+    background: rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+}
+
+.cbar__fill {
+    height: 100%;
+    border-radius: 5px;
+    background: var(--accent);
+    box-shadow: 0 0 10px var(--glow);
+    width: 0;
+    transition: width 0.45s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.cbar:first-child .cbar__fill { opacity: 1; }
+.cbar:not(:first-child) .cbar__fill { opacity: 0.5; }
+
+.cbar__pct {
+    text-align: right;
+    font-family: var(--mono);
+    color: var(--text-dim);
 }
