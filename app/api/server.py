@@ -77,6 +77,16 @@ FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 _EMPTY_RESULT = {"accepted": False, "label": "", "confidence": 0, "candidates": []}
 
 
+def _env_float(name: str, default: float) -> float:
+    value = os.environ.get(name)
+    return float(value) if value is not None else default
+
+
+def _env_int(name: str, default: int) -> int:
+    value = os.environ.get(name)
+    return int(value) if value is not None else default
+
+
 class RecognizerSession:
     """Mantiene el estado del reconocedor entre frames HTTP.
 
@@ -104,16 +114,32 @@ class RecognizerSession:
         self.preprocessor = Preprocessor(flip_horizontal=True)
         self.detector = HandDetector(max_hands=2)
         self.detector.start()
+        # Mismos defaults que el CLI (app.main). Ajustables por entorno si el
+        # navegador no alcanza ~30 FPS: subí LESCO_MOTION_THRESHOLD o bajá
+        # LESCO_SILENCE_FRAMES / LESCO_MIN_SIGN_FRAMES para que la seña cierre.
         self.segmenter = MotionSegmenter(
-            motion_threshold=DEFAULT_MOTION_THRESHOLD,
-            silence_frames=DEFAULT_SILENCE_FRAMES,
-            min_sign_frames=DEFAULT_MIN_SIGN_FRAMES,
-            max_sign_frames=DEFAULT_MAX_SIGN_FRAMES,
+            motion_threshold=_env_float("LESCO_MOTION_THRESHOLD", DEFAULT_MOTION_THRESHOLD),
+            silence_frames=_env_int("LESCO_SILENCE_FRAMES", DEFAULT_SILENCE_FRAMES),
+            min_sign_frames=_env_int("LESCO_MIN_SIGN_FRAMES", DEFAULT_MIN_SIGN_FRAMES),
+            max_sign_frames=_env_int("LESCO_MAX_SIGN_FRAMES", DEFAULT_MAX_SIGN_FRAMES),
+        )
+        self.confidence_threshold = _env_float(
+            "LESCO_CONFIDENCE_THRESHOLD", DEFAULT_CONFIDENCE_THRESHOLD
+        )
+        # Cuánta "mano detectada" se exige para intentar clasificar. Si en el
+        # navegador se pierde mano por recompresión/desenfoque, bajá estos:
+        # LESCO_MIN_DETECTED_RATIO (p. ej. 0.25) y LESCO_MIN_DETECTED_FRAMES.
+        self.min_detected_frames = _env_int(
+            "LESCO_MIN_DETECTED_FRAMES", DEFAULT_MIN_DETECTED_FRAMES
+        )
+        self.min_detected_ratio = _env_float(
+            "LESCO_MIN_DETECTED_RATIO", DEFAULT_MIN_DETECTED_RATIO
         )
 
         self.current_result: RecognitionResult | None = None
         self.result_expires = 0.0
         self.frame_counter = 0
+        self.last_event: dict | None = None
         self._lock = threading.Lock()
 
     def process_frame(self, frame_bgr: np.ndarray) -> dict:
@@ -132,14 +158,15 @@ class RecognizerSession:
                     frames,
                     detected,
                     DEFAULT_TOP_K,
-                    DEFAULT_CONFIDENCE_THRESHOLD,
+                    self.confidence_threshold,
                     DEFAULT_MARGIN_THRESHOLD,
-                    DEFAULT_MIN_DETECTED_FRAMES,
-                    DEFAULT_MIN_DETECTED_RATIO,
+                    self.min_detected_frames,
+                    self.min_detected_ratio,
                     DEFAULT_BAYES_SMOOTHING,
                     DEFAULT_BAYES_MIN_EVIDENCE,
                 )
                 self.segmenter.reset()
+                self._record_event(result)
 
                 if result.accepted:
                     self.current_result = result
@@ -152,6 +179,28 @@ class RecognizerSession:
                 self.current_result = None
 
             return self._serialize()
+
+    def _record_event(self, result: RecognitionResult) -> None:
+        """Registra el resultado de una seña cerrada (en log y para el HUD)."""
+        best = result.best_label
+        prob = result.best_probability
+        if result.accepted:
+            LOGGER.info("Predicción aceptada: %s (%.0f%%)", best, prob * 100)
+        else:
+            candidate = f"{best} {prob * 100:.0f}%" if result.candidates else "sin candidato"
+            LOGGER.info(
+                "Movimiento rechazado: %s (%s, evidencias=%d)",
+                result.reject_reason,
+                candidate,
+                result.evidence_count,
+            )
+        self.last_event = {
+            "accepted": result.accepted,
+            "reason": result.reject_reason,
+            "label": best,
+            "confidence": round(prob * 100),
+            "ts": time.monotonic(),
+        }
 
     def _serialize(self) -> dict:
         now = time.monotonic()
@@ -172,11 +221,22 @@ class RecognizerSession:
                 ],
             }
 
+        # Feedback de la última seña cerrada (útil cuando fue rechazada)
+        info = None
+        if self.last_event is not None and now - self.last_event["ts"] < 3.0:
+            info = {
+                "accepted": self.last_event["accepted"],
+                "reason": self.last_event["reason"],
+                "label": self.last_event["label"],
+                "confidence": self.last_event["confidence"],
+            }
+
         return {
             "state": self.segmenter.state.name,  # "WAITING" | "SIGNING"
             "velocity": round(self.segmenter.current_velocity, 5),
             "motion_threshold": self.segmenter.motion_threshold,
             "result": result_payload,
+            "info": info,
         }
 
 

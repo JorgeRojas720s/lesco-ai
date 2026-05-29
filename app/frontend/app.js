@@ -25,8 +25,16 @@ const historyEl = document.getElementById("history");
 const predictionBox = document.getElementById("prediction-box");
 
 const PREDICT_URL = "/predict";
-const FRAME_INTERVAL_MS = 120;
 const HISTORY_MAX = 8;
+
+// La detección del backend está calibrada para ~30 FPS (la cámara del CLI).
+// Enviamos a ese ritmo y a baja resolución para que el segmentador de
+// movimiento reciba suficientes frames por seña; si vamos lento (p. ej. 8 FPS)
+// nunca cierra la seña y se queda "capturando" sin reconocer nada.
+const TARGET_FPS = 30;
+const TARGET_INTERVAL_MS = 1000 / TARGET_FPS;
+const SEND_WIDTH = 960; // ancho de envío: equilibrio entre FPS y calidad de detección
+const SEND_QUALITY = 0.85; // calidad JPEG: más alta = MediaPipe detecta mejor la mano
 
 // ── Estado compartido entre el loop de red y el de render ───────────────────
 const hud = {
@@ -53,14 +61,17 @@ async function initCamera() {
 }
 
 async function sendFrame() {
+    const started = performance.now();
+
     if (!video.videoWidth) {
-        setTimeout(sendFrame, FRAME_INTERVAL_MS);
+        setTimeout(sendFrame, TARGET_INTERVAL_MS);
         return;
     }
 
-    grabCanvas.width = video.videoWidth;
-    grabCanvas.height = video.videoHeight;
-    grabCtx.drawImage(video, 0, 0);
+    const scale = SEND_WIDTH / video.videoWidth;
+    grabCanvas.width = SEND_WIDTH;
+    grabCanvas.height = Math.round(video.videoHeight * scale);
+    grabCtx.drawImage(video, 0, 0, grabCanvas.width, grabCanvas.height);
 
     grabCanvas.toBlob(
         async (blob) => {
@@ -74,10 +85,12 @@ async function sendFrame() {
                     statusTextEl.textContent = "Sin conexión con el servidor";
                 }
             }
-            setTimeout(sendFrame, FRAME_INTERVAL_MS);
+            // mantener ~TARGET_FPS: esperar solo lo que reste del ciclo
+            const elapsed = performance.now() - started;
+            setTimeout(sendFrame, Math.max(0, TARGET_INTERVAL_MS - elapsed));
         },
         "image/jpeg",
-        0.7
+        SEND_QUALITY
     );
 }
 
@@ -102,12 +115,18 @@ function handleResponse(data) {
     else if (hud.state === "SIGNING") setTheme("signing");
     else setTheme("waiting");
 
-    // Texto de estado / radar
-    statusTextEl.textContent = hud.accepted
-        ? "Seña reconocida"
-        : hud.state === "SIGNING"
-        ? "Capturando seña…"
-        : "Esperando seña";
+    // Texto de estado / radar (con motivo de rechazo si lo hay)
+    const info = data.info;
+    if (hud.accepted) {
+        statusTextEl.textContent = "Seña reconocida";
+    } else if (hud.state === "SIGNING") {
+        statusTextEl.textContent = "Capturando seña…";
+    } else if (info && info.accepted === false && info.reason) {
+        const near = info.label ? ` · ${info.label} ${info.confidence}%` : "";
+        statusTextEl.textContent = "No reconocida: " + info.reason + near;
+    } else {
+        statusTextEl.textContent = "Esperando seña";
+    }
     motionLabelEl.textContent = hud.state === "SIGNING" ? "CAPTURANDO" : "EN ESPERA";
 
     if (hud.accepted) {
