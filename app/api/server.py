@@ -104,6 +104,21 @@ def _dataset_path() -> Path:
     return Path(os.environ.get("LESCO_DATASET", str(DEFAULT_DATASET_PATH)))
 
 
+def _make_detector() -> HandDetector:
+    """Detector con umbrales de confianza más bajos que el default de MediaPipe.
+
+    El navegador manda frames recomprimidos: con la confianza alta (0.7) la
+    mano se "cae" en muchos frames (landmarks que tiemblan + baja proporción de
+    detección → rechazo "mano insuficiente"). Bajarla a 0.5 estabiliza y sube
+    la proporción. Ajustable con LESCO_DETECTION_CONFIDENCE / LESCO_TRACKING_CONFIDENCE.
+    """
+    return HandDetector(
+        max_hands=2,
+        detection_confidence=_env_float("LESCO_DETECTION_CONFIDENCE", 0.5),
+        tracking_confidence=_env_float("LESCO_TRACKING_CONFIDENCE", 0.5),
+    )
+
+
 class RecognizerSession:
     """Mantiene el estado del reconocedor entre frames HTTP.
 
@@ -136,7 +151,7 @@ class RecognizerSession:
         )
 
         self.preprocessor = Preprocessor(flip_horizontal=True)
-        self.detector = HandDetector(max_hands=2)
+        self.detector = _make_detector()
         self.detector.start()
         # Mismos defaults que el CLI (app.main). Ajustables por entorno si el
         # navegador no alcanza ~30 FPS: subí LESCO_MOTION_THRESHOLD o bajá
@@ -365,7 +380,7 @@ class CollectorSession:
 
     def __init__(self) -> None:
         self.preprocessor = Preprocessor(flip_horizontal=True)
-        self.detector = HandDetector(max_hands=2)
+        self.detector = _make_detector()
         self.detector.start()
         self.frames: list[np.ndarray] = []
         self.detected: list[bool] = []

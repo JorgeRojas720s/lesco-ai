@@ -118,9 +118,10 @@ body:not([data-view="recognize"]):not([data-view="collect"]) .hud-top__right { d
 .view--overlay { position: fixed; inset: 0; z-index: 10; pointer-events: none; }
 .view--overlay .panel,
 .view--overlay .text-input,
-.view--overlay .btn,
+.view--overlay .btn { pointer-events: auto; }
+/* La cuenta/REC y el toast son solo visuales: nunca deben tapar los botones. */
 .view--overlay .countdown,
-.view--overlay .toast { pointer-events: auto; }
+.view--overlay .toast { pointer-events: none; }
 
 /* ── Paneles laterales ────────────────────────────────────────────────── */
 

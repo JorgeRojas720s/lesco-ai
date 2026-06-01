@@ -426,7 +426,8 @@ async function collectTick() {
             const res = await fetch("/collect/frame", { method: "POST", body: frameForm(blob) });
             const d = await res.json();
             framesEl.textContent = d.frames;
-            detectedEl.textContent = d.detected;
+            const ratio = d.frames ? Math.round((d.detected / d.frames) * 100) : 0;
+            detectedEl.textContent = `${d.detected} (${ratio}%)`;
         } catch (err) { /* frame perdido */ }
     }
     if (!collecting) return;
