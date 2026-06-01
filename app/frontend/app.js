@@ -1,103 +1,176 @@
 /* ─────────────────────────────────────────────────────────────────────────
-   app.js · Cliente del HUD LESCO-AI
+   app.js · Hub web LESCO-AI
 
-   - Captura frames de la cámara y los envía a POST /predict (mismo origen).
-   - Pinta el HUD: estado, FPS, radar de movimiento, partículas, barras de
-     confianza, historial de señas y modo oscuro dinámico.
-   - El overlay de landmarks lo maneja landmarks.js (MediaPipe en navegador).
+   Router + cámara compartida + 4 vistas:
+     · Reconocer    → HUD en vivo (POST /predict)
+     · Grabar       → captura muestras al dataset (POST /collect/*)
+     · Entrenar     → re-entrena el modelo (POST /train, GET /train/status)
+     · Inspeccionar → estado del dataset (GET /api/dataset)
 
-   No contiene lógica de reconocimiento: solo consume la respuesta del backend.
+   No contiene lógica de reconocimiento: solo consume la API del backend.
    ───────────────────────────────────────────────────────────────────────── */
 
-// ── Referencias DOM ─────────────────────────────────────────────────────────
+// ── Constantes de captura ───────────────────────────────────────────────────
+const TARGET_FPS = 30;
+const TARGET_INTERVAL_MS = 1000 / TARGET_FPS;
+const SEND_WIDTH = 960;
+const SEND_QUALITY = 0.85;
+const HISTORY_MAX = 8;
+
+// ── DOM compartido ──────────────────────────────────────────────────────────
+const stage = document.getElementById("stage");
 const video = document.getElementById("video");
 const landmarksCanvas = document.getElementById("landmarks");
 const particlesCanvas = document.getElementById("particles");
 const radarCanvas = document.getElementById("radar");
+const backBtn = document.getElementById("back-btn");
+const statusTextEl = document.getElementById("status-text");
+const fpsEl = document.getElementById("fps");
 
+// Reconocer
 const predictionEl = document.getElementById("prediction");
 const confidenceEl = document.getElementById("confidence");
 const barsEl = document.getElementById("confidence-bars");
-const statusTextEl = document.getElementById("status-text");
-const fpsEl = document.getElementById("fps");
 const motionLabelEl = document.getElementById("motion-label");
 const historyEl = document.getElementById("history");
 const predictionBox = document.getElementById("prediction-box");
 
-const PREDICT_URL = "/predict";
-const HISTORY_MAX = 8;
+// Grabar
+const labelInput = document.getElementById("collect-label");
+const labelList = document.getElementById("label-list");
+const recordBtn = document.getElementById("collect-record");
+const stopBtn = document.getElementById("collect-stop");
+const discardBtn = document.getElementById("collect-discard");
+const framesEl = document.getElementById("collect-frames");
+const detectedEl = document.getElementById("collect-detected");
+const collectCountsEl = document.getElementById("collect-counts");
+const countdownEl = document.getElementById("countdown");
+const toastEl = document.getElementById("collect-toast");
 
-// La detección del backend está calibrada para ~30 FPS (la cámara del CLI).
-// Enviamos a ese ritmo y a baja resolución para que el segmentador de
-// movimiento reciba suficientes frames por seña; si vamos lento (p. ej. 8 FPS)
-// nunca cierra la seña y se queda "capturando" sin reconocer nada.
-const TARGET_FPS = 30;
-const TARGET_INTERVAL_MS = 1000 / TARGET_FPS;
-const SEND_WIDTH = 960; // ancho de envío: equilibrio entre FPS y calidad de detección
-const SEND_QUALITY = 0.85; // calidad JPEG: más alta = MediaPipe detecta mejor la mano
+// Entrenar / Inspeccionar
+const trainSummaryEl = document.getElementById("train-dataset-summary");
+const trainStartBtn = document.getElementById("train-start");
+const trainStatusEl = document.getElementById("train-status");
+const trainMetricsEl = document.getElementById("train-metrics");
+const inspectSummaryEl = document.getElementById("inspect-summary");
+const inspectBodyEl = document.getElementById("inspect-body");
+const inspectRefreshBtn = document.getElementById("inspect-refresh");
 
-// ── Estado compartido entre el loop de red y el de render ───────────────────
-const hud = {
-    state: "WAITING", // WAITING | SIGNING
-    velocity: 0,
-    motionThreshold: 0.03,
-    accepted: false,
-};
+// ── Estado ───────────────────────────────────────────────────────────────────
+let currentView = "menu";
+const hud = { state: "WAITING", velocity: 0, motionThreshold: 0.03, accepted: false };
+let acceptedActive = false;
 
-let acceptedActive = false; // evita duplicar entradas de historial durante el hold
-
-// ── Captura de cámara y envío de frames ─────────────────────────────────────
+// ── Captura de frames (compartida) ───────────────────────────────────────────
 const grabCanvas = document.createElement("canvas");
 const grabCtx = grabCanvas.getContext("2d");
 
-async function initCamera() {
-    const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 1280, height: 720 },
-        audio: false,
+function captureBlob() {
+    return new Promise((resolve) => {
+        if (!video.videoWidth) return resolve(null);
+        const scale = SEND_WIDTH / video.videoWidth;
+        grabCanvas.width = SEND_WIDTH;
+        grabCanvas.height = Math.round(video.videoHeight * scale);
+        grabCtx.drawImage(video, 0, 0, grabCanvas.width, grabCanvas.height);
+        grabCanvas.toBlob((b) => resolve(b), "image/jpeg", SEND_QUALITY);
     });
-    video.srcObject = stream;
-    await new Promise((res) => (video.onloadedmetadata = res));
-    await video.play();
 }
 
-async function sendFrame() {
-    const started = performance.now();
+function frameForm(blob) {
+    const f = new FormData();
+    f.append("file", blob, "frame.jpg");
+    return f;
+}
 
-    if (!video.videoWidth) {
-        setTimeout(sendFrame, TARGET_INTERVAL_MS);
-        return;
+// ── Cámara compartida (se inicia una sola vez) ───────────────────────────────
+let cameraReady = false;
+let cameraStarting = null;
+
+function ensureCamera() {
+    if (cameraReady) return Promise.resolve();
+    if (cameraStarting) return cameraStarting;
+    cameraStarting = (async () => {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { width: 1280, height: 720 },
+                audio: false,
+            });
+            video.srcObject = stream;
+            await new Promise((res) => (video.onloadedmetadata = res));
+            await video.play();
+            cameraReady = true;
+            if (window.LescoLandmarks) window.LescoLandmarks.init(video, landmarksCanvas);
+        } catch (err) {
+            statusTextEl.textContent = "No se pudo acceder a la cámara";
+            console.error(err);
+        }
+    })();
+    return cameraStarting;
+}
+
+// ── Router ────────────────────────────────────────────────────────────────────
+function setView(name) {
+    currentView = name;
+    document.body.dataset.view = name;
+    document.querySelectorAll(".view").forEach((v) => {
+        v.classList.toggle("hidden", v.dataset.view !== name);
+    });
+
+    const isCamera = name === "recognize" || name === "collect";
+    stage.classList.toggle("hidden", !isCamera);
+    backBtn.classList.toggle("hidden", name === "menu");
+
+    // Detener loops activos
+    recognizeRunning = false;
+    collecting = false;
+    countdownEl.classList.add("hidden");
+    if (name !== "recognize") setTheme("waiting");
+
+    if (name === "recognize") {
+        statusTextEl.textContent = "Iniciando…";
+        ensureCamera().then(startRecognize);
+    } else if (name === "collect") {
+        resetCollectUI();
+        ensureCamera();
+        loadDatasetInto(collectCountsEl, true);
+    } else if (name === "train") {
+        loadTrainSummary();
+        pollTrain(); // refleja un entrenamiento en curso si lo hay
+    } else if (name === "inspect") {
+        loadInspect();
     }
-
-    const scale = SEND_WIDTH / video.videoWidth;
-    grabCanvas.width = SEND_WIDTH;
-    grabCanvas.height = Math.round(video.videoHeight * scale);
-    grabCtx.drawImage(video, 0, 0, grabCanvas.width, grabCanvas.height);
-
-    grabCanvas.toBlob(
-        async (blob) => {
-            if (blob) {
-                const formData = new FormData();
-                formData.append("file", blob, "frame.jpg");
-                try {
-                    const res = await fetch(PREDICT_URL, { method: "POST", body: formData });
-                    handleResponse(await res.json());
-                } catch (err) {
-                    statusTextEl.textContent = "Sin conexión con el servidor";
-                }
-            }
-            // mantener ~TARGET_FPS: esperar solo lo que reste del ciclo
-            const elapsed = performance.now() - started;
-            setTimeout(sendFrame, Math.max(0, TARGET_INTERVAL_MS - elapsed));
-        },
-        "image/jpeg",
-        SEND_QUALITY
-    );
 }
 
-// ── Manejo de la respuesta del backend ──────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+// RECONOCER
+// ═════════════════════════════════════════════════════════════════════════════
+let recognizeRunning = false;
+
+function startRecognize() {
+    if (recognizeRunning) return;
+    recognizeRunning = true;
+    recognizeTick();
+}
+
+async function recognizeTick() {
+    if (!recognizeRunning) return;
+    const t0 = performance.now();
+    const blob = await captureBlob();
+    if (blob) {
+        try {
+            const res = await fetch("/predict", { method: "POST", body: frameForm(blob) });
+            handleResponse(await res.json());
+        } catch (err) {
+            statusTextEl.textContent = "Sin conexión con el servidor";
+        }
+    }
+    if (!recognizeRunning) return;
+    const elapsed = performance.now() - t0;
+    setTimeout(recognizeTick, Math.max(0, TARGET_INTERVAL_MS - elapsed));
+}
+
 function handleResponse(data) {
     if (!data) return;
-
     hud.state = data.state || "WAITING";
     hud.velocity = data.velocity || 0;
     hud.motionThreshold = data.motion_threshold || hud.motionThreshold;
@@ -110,12 +183,10 @@ function handleResponse(data) {
     const result = data.result || {};
     hud.accepted = !!result.accepted;
 
-    // Modo oscuro dinámico
     if (hud.accepted) setTheme("accepted");
     else if (hud.state === "SIGNING") setTheme("signing");
     else setTheme("waiting");
 
-    // Texto de estado / radar (con motivo de rechazo si lo hay)
     const info = data.info;
     if (hud.accepted) {
         statusTextEl.textContent = "Seña reconocida";
@@ -135,7 +206,7 @@ function handleResponse(data) {
             addToHistory(result.label);
             burstParticles();
             predictionBox.classList.remove("pop");
-            void predictionBox.offsetWidth; // reinicia animación
+            void predictionBox.offsetWidth;
             predictionBox.classList.add("pop");
             acceptedActive = true;
         }
@@ -168,34 +239,25 @@ function renderBars(candidates) {
             <span class="cbar__track"><span class="cbar__fill"></span></span>
             <span class="cbar__pct">${pct}%</span>`;
         barsEl.appendChild(row);
-        // fuerza un reflow con width:0 y luego anima hasta pct
         const fill = row.querySelector(".cbar__fill");
         void fill.offsetWidth;
         fill.style.width = pct + "%";
     });
 }
 
-// ── Historial ────────────────────────────────────────────────────────────────
 function addToHistory(label) {
     if (!label) return;
     const empty = historyEl.querySelector(".history__empty");
     if (empty) empty.remove();
-
     const time = new Date().toLocaleTimeString("es", {
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
+        hour: "2-digit", minute: "2-digit", second: "2-digit",
     });
     const li = document.createElement("li");
     li.innerHTML = `<span class="h-label">${label}</span><span class="h-time">${time}</span>`;
     historyEl.prepend(li);
-
-    while (historyEl.children.length > HISTORY_MAX) {
-        historyEl.removeChild(historyEl.lastChild);
-    }
+    while (historyEl.children.length > HISTORY_MAX) historyEl.removeChild(historyEl.lastChild);
 }
 
-// ── Modo oscuro dinámico ─────────────────────────────────────────────────────
 function setTheme(name) {
     const cls = "state-" + name;
     if (document.body.classList.contains(cls)) return;
@@ -203,18 +265,12 @@ function setTheme(name) {
     document.body.classList.add(cls);
 }
 
-// ── Helpers de color (leen las variables CSS del tema activo) ────────────────
-function cssVar(name) {
-    return getComputedStyle(document.body).getPropertyValue(name).trim();
-}
-function accentRGB() {
-    return cssVar("--accent-rgb") || "0, 229, 255";
-}
-function accentHex() {
-    return cssVar("--accent") || "#00e5ff";
-}
+// ── Helpers de color ──────────────────────────────────────────────────────────
+function cssVar(n) { return getComputedStyle(document.body).getPropertyValue(n).trim(); }
+function accentRGB() { return cssVar("--accent-rgb") || "0, 229, 255"; }
+function accentHex() { return cssVar("--accent") || "#00e5ff"; }
 
-// ── Partículas ───────────────────────────────────────────────────────────────
+// ── Partículas ────────────────────────────────────────────────────────────────
 const pCtx = particlesCanvas.getContext("2d");
 let particles = [];
 
@@ -226,33 +282,17 @@ window.addEventListener("resize", resizeCanvases);
 resizeCanvases();
 
 function spawnParticle(burst = false) {
-    const w = particlesCanvas.width;
-    const h = particlesCanvas.height;
+    const w = particlesCanvas.width, h = particlesCanvas.height;
     if (burst) {
         const angle = Math.random() * Math.PI * 2;
         const speed = 2 + Math.random() * 4;
-        return {
-            x: w / 2,
-            y: h - 140,
-            vx: Math.cos(angle) * speed,
-            vy: Math.sin(angle) * speed,
-            r: 1.5 + Math.random() * 2.5,
-            life: 1,
-            decay: 0.012 + Math.random() * 0.02,
-        };
+        return { x: w / 2, y: h - 140, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+                 r: 1.5 + Math.random() * 2.5, life: 1, decay: 0.012 + Math.random() * 0.02 };
     }
-    return {
-        x: Math.random() * w,
-        y: h + 10,
-        vx: (Math.random() - 0.5) * 0.4,
-        vy: -(0.3 + Math.random() * 0.8),
-        r: 0.8 + Math.random() * 1.8,
-        life: 1,
-        decay: 0.0,
-    };
+    return { x: Math.random() * w, y: h + 10, vx: (Math.random() - 0.5) * 0.4,
+             vy: -(0.3 + Math.random() * 0.8), r: 0.8 + Math.random() * 1.8, life: 1, decay: 0.0 };
 }
 
-// campo ambiental de partículas
 for (let i = 0; i < 70; i++) {
     const p = spawnParticle();
     p.y = Math.random() * particlesCanvas.height;
@@ -264,110 +304,67 @@ function burstParticles() {
 }
 
 function updateParticles() {
-    const w = particlesCanvas.width;
-    const h = particlesCanvas.height;
+    const w = particlesCanvas.width, h = particlesCanvas.height;
     pCtx.clearRect(0, 0, w, h);
-
     const rgb = accentRGB();
-    // velocidad sube cuando hay movimiento
     const energy = hud.state === "SIGNING" ? 1.8 : 1;
-
     const next = [];
     for (const p of particles) {
-        p.x += p.vx * energy;
-        p.y += p.vy * energy;
+        p.x += p.vx * energy; p.y += p.vy * energy;
         if (p.decay) p.life -= p.decay;
-
         const onScreen = p.x > -10 && p.x < w + 10 && p.y > -10 && p.y < h + 10;
-        const alive = p.life > 0 && onScreen;
-
-        if (alive) {
+        if (p.life > 0 && onScreen) {
             pCtx.beginPath();
             pCtx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
             pCtx.fillStyle = `rgba(${rgb}, ${0.5 * p.life})`;
             pCtx.fill();
             next.push(p);
         } else if (!p.decay) {
-            // partícula ambiental: reciclar
             next.push(spawnParticle());
         }
     }
     particles = next;
-
-    // mantener una densidad mínima
     while (particles.length < 70) particles.push(spawnParticle());
 }
 
-// ── Radar de movimiento ──────────────────────────────────────────────────────
+// ── Radar ───────────────────────────────────────────────────────────────────
 const rCtx = radarCanvas.getContext("2d");
 let sweep = 0;
 
 function drawRadar() {
-    const w = radarCanvas.width;
-    const h = radarCanvas.height;
-    const cx = w / 2;
-    const cy = h / 2;
-    const R = w / 2 - 6;
-    const rgb = accentRGB();
-    const hex = accentHex();
-
+    const w = radarCanvas.width, h = radarCanvas.height;
+    const cx = w / 2, cy = h / 2, R = w / 2 - 6;
+    const rgb = accentRGB(), hex = accentHex();
     rCtx.clearRect(0, 0, w, h);
 
-    // anillos y cruz
     rCtx.strokeStyle = `rgba(${rgb}, 0.22)`;
     rCtx.lineWidth = 1;
-    for (let i = 1; i <= 3; i++) {
-        rCtx.beginPath();
-        rCtx.arc(cx, cy, (R * i) / 3, 0, Math.PI * 2);
-        rCtx.stroke();
-    }
+    for (let i = 1; i <= 3; i++) { rCtx.beginPath(); rCtx.arc(cx, cy, (R * i) / 3, 0, Math.PI * 2); rCtx.stroke(); }
     rCtx.beginPath();
-    rCtx.moveTo(cx - R, cy);
-    rCtx.lineTo(cx + R, cy);
-    rCtx.moveTo(cx, cy - R);
-    rCtx.lineTo(cx, cy + R);
-    rCtx.stroke();
+    rCtx.moveTo(cx - R, cy); rCtx.lineTo(cx + R, cy);
+    rCtx.moveTo(cx, cy - R); rCtx.lineTo(cx, cy + R); rCtx.stroke();
 
-    // disco proporcional a la velocidad (misma fórmula que el HUD cv2)
-    const ratio = Math.max(
-        0,
-        Math.min(1, hud.velocity / ((hud.motionThreshold || 0.03) * 3))
-    );
-    rCtx.beginPath();
-    rCtx.arc(cx, cy, R * ratio, 0, Math.PI * 2);
-    rCtx.fillStyle = `rgba(${rgb}, 0.18)`;
-    rCtx.fill();
-    rCtx.lineWidth = 2;
-    rCtx.strokeStyle = hex;
-    rCtx.shadowBlur = 12;
-    rCtx.shadowColor = hex;
-    rCtx.stroke();
-    rCtx.shadowBlur = 0;
+    const ratio = Math.max(0, Math.min(1, hud.velocity / ((hud.motionThreshold || 0.03) * 3)));
+    rCtx.beginPath(); rCtx.arc(cx, cy, R * ratio, 0, Math.PI * 2);
+    rCtx.fillStyle = `rgba(${rgb}, 0.18)`; rCtx.fill();
+    rCtx.lineWidth = 2; rCtx.strokeStyle = hex; rCtx.shadowBlur = 12; rCtx.shadowColor = hex;
+    rCtx.stroke(); rCtx.shadowBlur = 0;
 
-    // barrido giratorio
     sweep += 0.06;
-    const sx = cx + Math.cos(sweep) * R;
-    const sy = cy + Math.sin(sweep) * R;
+    const sx = cx + Math.cos(sweep) * R, sy = cy + Math.sin(sweep) * R;
     const grad = rCtx.createLinearGradient(cx, cy, sx, sy);
-    grad.addColorStop(0, `rgba(${rgb}, 0.85)`);
-    grad.addColorStop(1, `rgba(${rgb}, 0)`);
-    rCtx.strokeStyle = grad;
-    rCtx.lineWidth = 2;
-    rCtx.beginPath();
-    rCtx.moveTo(cx, cy);
-    rCtx.lineTo(sx, sy);
-    rCtx.stroke();
+    grad.addColorStop(0, `rgba(${rgb}, 0.85)`); grad.addColorStop(1, `rgba(${rgb}, 0)`);
+    rCtx.strokeStyle = grad; rCtx.lineWidth = 2;
+    rCtx.beginPath(); rCtx.moveTo(cx, cy); rCtx.lineTo(sx, sy); rCtx.stroke();
 }
 
-// ── Loop de render unificado (FPS + radar + partículas) ──────────────────────
-let frameCount = 0;
-let lastFpsTime = performance.now();
+// ── Loop de render (FPS + radar + partículas), siempre activo ─────────────────
+let frameCount = 0, lastFpsTime = performance.now();
 
 function render(now) {
     frameCount++;
     if (now - lastFpsTime >= 500) {
-        const fps = Math.round((frameCount * 1000) / (now - lastFpsTime));
-        fpsEl.textContent = fps + " FPS";
+        fpsEl.textContent = Math.round((frameCount * 1000) / (now - lastFpsTime)) + " FPS";
         frameCount = 0;
         lastFpsTime = now;
     }
@@ -376,23 +373,247 @@ function render(now) {
     requestAnimationFrame(render);
 }
 
-// ── Arranque ─────────────────────────────────────────────────────────────────
-async function start() {
-    // El HUD ambiental (radar, partículas, FPS) corre siempre, aunque la
-    // cámara falle, para no quedar congelado.
-    requestAnimationFrame(render);
+// ═════════════════════════════════════════════════════════════════════════════
+// GRABAR
+// ═════════════════════════════════════════════════════════════════════════════
+let collecting = false;
 
-    try {
-        await initCamera();
-    } catch (err) {
-        statusTextEl.textContent = "No se pudo acceder a la cámara";
-        console.error(err);
-        return;
-    }
-    if (window.LescoLandmarks) {
-        window.LescoLandmarks.init(video, landmarksCanvas);
-    }
-    sendFrame();
+function resetCollectUI() {
+    recordBtn.disabled = false;
+    stopBtn.disabled = true;
+    discardBtn.disabled = true;
+    framesEl.textContent = "0";
+    detectedEl.textContent = "0";
 }
 
-start();
+function runCountdown(seconds) {
+    return new Promise((resolve) => {
+        countdownEl.classList.remove("rec", "hidden");
+        let c = seconds;
+        countdownEl.textContent = c;
+        const iv = setInterval(() => {
+            c--;
+            if (c <= 0) { clearInterval(iv); resolve(); }
+            else countdownEl.textContent = c;
+        }, 1000);
+    });
+}
+
+async function startRecording() {
+    const label = (labelInput.value || "").trim();
+    if (!label) { toast("Escribí una etiqueta primero", "err"); return; }
+
+    recordBtn.disabled = true;
+    await runCountdown(3);
+    if (currentView !== "collect") return; // salió de la vista
+
+    await fetch("/collect/start", { method: "POST" });
+    collecting = true;
+    stopBtn.disabled = false;
+    discardBtn.disabled = false;
+    countdownEl.textContent = "● REC";
+    countdownEl.classList.add("rec");
+    countdownEl.classList.remove("hidden");
+    collectTick();
+}
+
+async function collectTick() {
+    if (!collecting) return;
+    const t0 = performance.now();
+    const blob = await captureBlob();
+    if (blob) {
+        try {
+            const res = await fetch("/collect/frame", { method: "POST", body: frameForm(blob) });
+            const d = await res.json();
+            framesEl.textContent = d.frames;
+            detectedEl.textContent = d.detected;
+        } catch (err) { /* frame perdido */ }
+    }
+    if (!collecting) return;
+    const elapsed = performance.now() - t0;
+    setTimeout(collectTick, Math.max(0, TARGET_INTERVAL_MS - elapsed));
+}
+
+async function finishRecording(save) {
+    collecting = false;
+    countdownEl.classList.add("hidden");
+    countdownEl.classList.remove("rec");
+    recordBtn.disabled = false;
+    stopBtn.disabled = true;
+    discardBtn.disabled = true;
+
+    if (save) {
+        const label = (labelInput.value || "").trim();
+        const f = new FormData();
+        f.append("label", label);
+        try {
+            const res = await fetch("/collect/save", { method: "POST", body: f });
+            const d = await res.json();
+            if (d.ok) {
+                toast(`✓ ${d.label} guardada (${d.total} muestras)`, "ok");
+                renderCounts(d.per_label);
+                refreshLabels(d.per_label);
+            } else {
+                toast("✗ " + (d.reason || "no se pudo guardar"), "err");
+            }
+        } catch (err) {
+            toast("✗ error al guardar", "err");
+        }
+    } else {
+        await fetch("/collect/discard", { method: "POST" });
+        toast("Toma descartada", "err");
+    }
+    framesEl.textContent = "0";
+    detectedEl.textContent = "0";
+}
+
+let toastTimer = null;
+function toast(msg, kind) {
+    toastEl.textContent = msg;
+    toastEl.className = "toast " + (kind || "");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.add("hidden"), 2800);
+}
+
+function renderCounts(perLabel) {
+    const entries = Object.entries(perLabel || {});
+    if (!entries.length) {
+        collectCountsEl.innerHTML = '<li class="history__empty">Sin muestras</li>';
+        return;
+    }
+    collectCountsEl.innerHTML = entries
+        .sort((a, b) => b[1] - a[1])
+        .map(([l, c]) => `<li><span>${l}</span><span class="h-time">${c}</span></li>`)
+        .join("");
+}
+
+function refreshLabels(perLabel) {
+    labelList.innerHTML = Object.keys(perLabel || {})
+        .map((l) => `<option value="${l}">`)
+        .join("");
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// DATASET (compartido por Grabar, Entrenar, Inspeccionar)
+// ═════════════════════════════════════════════════════════════════════════════
+async function fetchDataset() {
+    try {
+        const res = await fetch("/api/dataset");
+        return await res.json();
+    } catch (err) {
+        return null;
+    }
+}
+
+function summaryText(d) {
+    if (!d) return "No se pudo leer el dataset.";
+    if (!d.exists || !d.total_samples) return "Dataset vacío: grabá muestras primero.";
+    const labels = Object.keys(d.per_label || {}).length;
+    return `Total: ${d.total_samples} muestras · ${labels} etiquetas`;
+}
+
+async function loadDatasetInto(listEl, alsoLabels) {
+    const d = await fetchDataset();
+    const per = (d && d.per_label) || {};
+    renderCounts(per);
+    if (alsoLabels) refreshLabels(per);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ENTRENAR
+// ═════════════════════════════════════════════════════════════════════════════
+async function loadTrainSummary() {
+    trainSummaryEl.textContent = "Cargando dataset…";
+    trainSummaryEl.textContent = summaryText(await fetchDataset());
+}
+
+async function startTraining() {
+    trainStartBtn.disabled = true;
+    trainStatusEl.className = "train-status";
+    trainStatusEl.textContent = "Entrenando…";
+    trainMetricsEl.innerHTML = "";
+    try {
+        await fetch("/train", { method: "POST" });
+    } catch (err) {
+        trainStatusEl.className = "train-status error";
+        trainStatusEl.textContent = "✗ no se pudo iniciar";
+        trainStartBtn.disabled = false;
+        return;
+    }
+    pollTrain();
+}
+
+async function pollTrain() {
+    let s;
+    try {
+        s = await (await fetch("/train/status")).json();
+    } catch (err) { return; }
+
+    if (s.status === "running") {
+        trainStartBtn.disabled = true;
+        trainStatusEl.className = "train-status";
+        trainStatusEl.textContent = s.message || "Entrenando…";
+        setTimeout(pollTrain, 1500);
+        return;
+    }
+    trainStartBtn.disabled = false;
+    if (s.status === "done") {
+        trainStatusEl.className = "train-status";
+        trainStatusEl.textContent = "✓ " + s.message;
+        renderMetrics(s.metrics);
+    } else if (s.status === "error") {
+        trainStatusEl.className = "train-status error";
+        trainStatusEl.textContent = "✗ " + s.message;
+    }
+}
+
+function renderMetrics(m) {
+    if (!m) { trainMetricsEl.innerHTML = ""; return; }
+    const val = m.val_acc == null ? "—" : Math.round(m.val_acc * 100) + "%";
+    trainMetricsEl.innerHTML = `
+        <div class="metric"><b>${Math.round(m.train_acc * 100)}%</b><span>Precisión entrenamiento</span></div>
+        <div class="metric"><b>${val}</b><span>Precisión validación</span></div>
+        <div class="metric"><b>${m.train_samples}</b><span>Muestras de entrenamiento</span></div>
+        <div class="metric"><b>${m.labels.length}</b><span>${m.labels.join(", ")}</span></div>`;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// INSPECCIONAR
+// ═════════════════════════════════════════════════════════════════════════════
+async function loadInspect() {
+    inspectSummaryEl.textContent = "Cargando…";
+    const d = await fetchDataset();
+    inspectSummaryEl.textContent = summaryText(d);
+    renderTable((d && d.per_label) || {});
+}
+
+function renderTable(perLabel) {
+    const entries = Object.entries(perLabel || {});
+    if (!entries.length) {
+        inspectBodyEl.innerHTML = '<tr><td colspan="3" style="color:var(--text-dim)">Sin muestras</td></tr>';
+        return;
+    }
+    const max = Math.max(...entries.map((e) => e[1]));
+    inspectBodyEl.innerHTML = entries
+        .sort((a, b) => b[1] - a[1])
+        .map(([l, c]) =>
+            `<tr><td>${l}</td><td><b>${c}</b></td>
+             <td><div class="bar-cell"><span style="width:${(c / max) * 100}%"></span></div></td></tr>`)
+        .join("");
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// WIRING + ARRANQUE
+// ═════════════════════════════════════════════════════════════════════════════
+document.querySelectorAll(".menu-card").forEach((card) => {
+    card.addEventListener("click", () => setView(card.dataset.go));
+});
+backBtn.addEventListener("click", () => setView("menu"));
+recordBtn.addEventListener("click", startRecording);
+stopBtn.addEventListener("click", () => finishRecording(true));
+discardBtn.addEventListener("click", () => finishRecording(false));
+trainStartBtn.addEventListener("click", startTraining);
+inspectRefreshBtn.addEventListener("click", loadInspect);
+
+requestAnimationFrame(render);
+setView("menu");

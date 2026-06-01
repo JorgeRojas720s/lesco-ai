@@ -6,50 +6,79 @@
     <title>LESCO-AI</title>
     <link rel="stylesheet" href="style.css">
 </head>
-<body class="state-waiting">
+<body class="state-waiting" data-view="menu">
 
-<div class="app">
+<!-- Capa de cámara compartida (visible en Reconocer y Grabar) -->
+<div id="stage" class="stage hidden">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="landmarks" class="layer mirrored"></canvas>
+    <canvas id="particles" class="layer"></canvas>
+    <div class="scanline"></div>
+    <div class="vignette"></div>
+</div>
 
-    <!-- Capa de cámara -->
-    <div class="camera-container">
-        <video id="video" autoplay playsinline muted></video>
-        <canvas id="landmarks" class="layer mirrored"></canvas>
-        <canvas id="particles" class="layer"></canvas>
-        <div class="scanline"></div>
-        <div class="vignette"></div>
-    </div>
+<!-- Esquinas cyberpunk -->
+<div class="corner corner--tl"></div>
+<div class="corner corner--tr"></div>
+<div class="corner corner--bl"></div>
+<div class="corner corner--br"></div>
 
-    <!-- Esquinas cyberpunk -->
-    <div class="corner corner--tl"></div>
-    <div class="corner corner--tr"></div>
-    <div class="corner corner--bl"></div>
-    <div class="corner corner--br"></div>
-
-    <!-- Barra superior -->
-    <div class="hud-top">
+<!-- Barra superior -->
+<header class="hud-top">
+    <div class="hud-top__left">
+        <button id="back-btn" class="back-btn hidden">‹ Menú</button>
         <div class="logo">
             LESCO<span>-AI</span>
             <div class="logo-sub">NEURAL SIGN RECOGNIZER</div>
         </div>
-        <div class="hud-top__right">
-            <div class="status" id="status">
-                <span class="status-dot"></span>
-                <span id="status-text">Iniciando…</span>
-            </div>
-            <div class="fps" id="fps">-- FPS</div>
+    </div>
+    <div class="hud-top__right">
+        <div class="status" id="status">
+            <span class="status-dot"></span>
+            <span id="status-text">Listo</span>
+        </div>
+        <div class="fps" id="fps">-- FPS</div>
+    </div>
+</header>
+
+<!-- ───────────── VISTA: MENÚ ───────────── -->
+<section class="view view--menu" data-view="menu">
+    <div class="menu-wrap">
+        <h1 class="menu-title">Centro de control</h1>
+        <p class="menu-sub">Reconocimiento de Lengua de Señas Costarricense</p>
+        <div class="menu-grid">
+            <button class="menu-card" data-go="recognize">
+                <div class="menu-card__icon">👁️</div>
+                <div class="menu-card__title">Reconocer</div>
+                <div class="menu-card__desc">Traducción de señas en vivo con HUD</div>
+            </button>
+            <button class="menu-card" data-go="collect">
+                <div class="menu-card__icon">🎬</div>
+                <div class="menu-card__title">Grabar muestras</div>
+                <div class="menu-card__desc">Alimentá el dataset desde la cámara</div>
+            </button>
+            <button class="menu-card" data-go="train">
+                <div class="menu-card__icon">🧠</div>
+                <div class="menu-card__title">Entrenar modelo</div>
+                <div class="menu-card__desc">Re-entrená con el dataset actual</div>
+            </button>
+            <button class="menu-card" data-go="inspect">
+                <div class="menu-card__icon">📊</div>
+                <div class="menu-card__title">Inspeccionar</div>
+                <div class="menu-card__desc">Etiquetas y muestras del dataset</div>
+            </button>
         </div>
     </div>
+</section>
 
-    <!-- Panel izquierdo: radar de movimiento -->
+<!-- ───────────── VISTA: RECONOCER ───────────── -->
+<section class="view view--overlay hidden" data-view="recognize">
     <div class="panel panel--left">
         <div class="panel__title">MOVIMIENTO</div>
         <canvas id="radar" width="200" height="200"></canvas>
-        <div class="radar-readout">
-            <span id="motion-label">EN ESPERA</span>
-        </div>
+        <div class="radar-readout"><span id="motion-label">EN ESPERA</span></div>
     </div>
 
-    <!-- Panel derecho: historial -->
     <div class="panel panel--right">
         <div class="panel__title">HISTORIAL</div>
         <ul class="history" id="history">
@@ -57,16 +86,72 @@
         </ul>
     </div>
 
-    <!-- Predicción + barras de confianza -->
     <div class="prediction-box" id="prediction-box">
         <div class="prediction-label" id="prediction">---</div>
-        <div class="prediction-confidence">
-            <span id="confidence">0%</span>
-        </div>
+        <div class="prediction-confidence"><span id="confidence">0%</span></div>
         <div class="confidence-bars" id="confidence-bars"></div>
     </div>
+</section>
 
-</div>
+<!-- ───────────── VISTA: GRABAR ───────────── -->
+<section class="view view--overlay hidden" data-view="collect">
+    <div class="panel panel--left">
+        <div class="panel__title">ETIQUETA</div>
+        <input id="collect-label" class="text-input" list="label-list"
+               placeholder="Ej: HOLA" autocomplete="off">
+        <datalist id="label-list"></datalist>
+
+        <div class="collect-controls">
+            <button id="collect-record" class="btn btn--accent">● Grabar</button>
+            <button id="collect-stop" class="btn" disabled>■ Detener y guardar</button>
+            <button id="collect-discard" class="btn btn--ghost" disabled>Descartar</button>
+        </div>
+
+        <div class="collect-readout">
+            <div>Frames: <b id="collect-frames">0</b></div>
+            <div>Con mano: <b id="collect-detected">0</b></div>
+        </div>
+        <p class="hint">Cuenta regresiva → hacé la seña → Detener para guardar.</p>
+    </div>
+
+    <div class="panel panel--right">
+        <div class="panel__title">MUESTRAS EN DATASET</div>
+        <ul class="history" id="collect-counts">
+            <li class="history__empty">Sin muestras</li>
+        </ul>
+    </div>
+
+    <div class="countdown hidden" id="countdown">3</div>
+    <div class="toast hidden" id="collect-toast"></div>
+</section>
+
+<!-- ───────────── VISTA: ENTRENAR ───────────── -->
+<section class="view view--page hidden" data-view="train">
+    <div class="card-page">
+        <h2>🧠 Entrenar modelo</h2>
+        <p class="card-page__desc">
+            Entrena la red con todas las muestras del dataset y recarga el modelo
+            en caliente (no hace falta reiniciar el servidor).
+        </p>
+        <div id="train-dataset-summary" class="summary-box">Cargando dataset…</div>
+        <button id="train-start" class="btn btn--accent btn--lg">Entrenar ahora</button>
+        <div id="train-status" class="train-status"></div>
+        <div id="train-metrics" class="metrics-grid"></div>
+    </div>
+</section>
+
+<!-- ───────────── VISTA: INSPECCIONAR ───────────── -->
+<section class="view view--page hidden" data-view="inspect">
+    <div class="card-page">
+        <h2>📊 Inspeccionar dataset</h2>
+        <div id="inspect-summary" class="summary-box">Cargando…</div>
+        <table class="data-table" id="inspect-table">
+            <thead><tr><th>Etiqueta</th><th>Muestras</th><th></th></tr></thead>
+            <tbody id="inspect-body"></tbody>
+        </table>
+        <button id="inspect-refresh" class="btn btn--ghost">↻ Refrescar</button>
+    </div>
+</section>
 
 <!-- MediaPipe Hands (overlay de landmarks, solo navegador) -->
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/hands.js" crossorigin="anonymous"></script>

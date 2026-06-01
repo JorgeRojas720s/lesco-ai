@@ -71,28 +71,46 @@ Se abre la camara, detecta tus manos con MediaPipe y usa el modelo entrenado
 
 Presioná `Q` para cerrar la ventana.
 
-## Correr el HUD web (interfaz avanzada)
+## App web (recomendado, reemplaza al CLI)
 
-En vez de la ventana de OpenCV, podés usar el HUD web (`app/frontend`), que
-ofrece barras de confianza, historial de señas, radar de movimiento, overlay de
-landmarks, partículas y FPS. Levantá el servidor:
+Hay un hub web (`app/frontend`) servido por un servidor FastAPI que reutiliza el
+MISMO pipeline de detección que el CLI (no cambia la lógica). Levantalo con:
 
 ```bash
 uv run uvicorn app.api.server:app --port 8000
 ```
 
-Luego abrí <http://localhost:8000/> y dale permiso a la cámara. El servidor
-reutiliza exactamente el mismo pipeline de reconocimiento que `app.main` (no
-cambia la lógica de detección): el navegador envía frames a `POST /predict` y
-recibe el estado, la velocidad y la predicción para pintar el HUD.
+Luego abrí <http://localhost:8000/> y dale permiso a la cámara. El menú tiene
+cuatro secciones:
 
-Rutas opcionales por variable de entorno:
+- **Reconocer** — HUD en vivo (predicción, barras de confianza, historial, radar
+  de movimiento, overlay de landmarks con MediaPipe, partículas, FPS).
+- **Grabar muestras** — graba señas al dataset *desde la propia cámara web*, con
+  cuenta regresiva. Como se graban por el mismo pipeline que reconoce, el dataset
+  coincide con lo que ve el reconocedor (evita el desajuste del CLI).
+- **Entrenar modelo** — re-entrena con el dataset actual y recarga el modelo en
+  caliente, sin reiniciar el servidor.
+- **Inspeccionar** — etiquetas y cantidad de muestras por clase.
+
+Flujo recomendado: **Grabar** (15-30 tomas por seña) → **Entrenar** → **Reconocer**.
+
+### Endpoints
+
+`POST /predict`, `POST /collect/{start,frame,save,discard}`, `POST /train`,
+`GET /train/status`, `GET /api/dataset`.
+
+### Ajustes por variable de entorno (opcional)
 
 ```bash
-LESCO_MODEL=models/neural_sign_classifier.npz \
-LESCO_DATASET=data/signs_dataset.h5 \
-uv run uvicorn app.api.server:app --port 8000
+LESCO_MODEL=models/neural_sign_classifier.npz   # ruta del modelo
+LESCO_DATASET=data/signs_dataset.h5             # ruta del dataset
+LESCO_MIN_CLASS_DISTANCE_THRESHOLD=4.0          # afloja validación de distancia
+LESCO_MIN_DETECTED_RATIO=0.30                   # exige menos "mano detectada"
+LESCO_CONFIDENCE_THRESHOLD=0.6                  # baja el umbral de confianza
 ```
+
+> Si regrabás el dataset por la web y re-entrenás, normalmente no hace falta
+> aflojar estos umbrales: las distancias dejan de estar infladas.
 
 ## Entrenar la red neuronal
 
