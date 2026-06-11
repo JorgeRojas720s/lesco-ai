@@ -1,7 +1,4 @@
 """
-app/vision/hand_detector.py
-===========================
-
 Funcion
 -------
 Detecta manos en frames BGR usando MediaPipe Hands y devuelve landmarks en

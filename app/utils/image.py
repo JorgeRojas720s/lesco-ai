@@ -1,6 +1,4 @@
 """
-app/utils/image.py
-==================
 
 Funcion
 -------

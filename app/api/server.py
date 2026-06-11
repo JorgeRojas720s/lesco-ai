@@ -1,7 +1,4 @@
 """
-app/api/server.py
-=================
-
 Servidor web del reconocedor LESCO.
 
 Expone el MISMO pipeline de deteccion que ``app/main.py`` (MediaPipe + red

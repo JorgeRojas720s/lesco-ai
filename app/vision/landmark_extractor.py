@@ -1,7 +1,4 @@
 """
-app/vision/landmark_extractor.py
-================================
-
 Funcion
 -------
 Convierte una mano detectada en features estructuradas para visualizacion o

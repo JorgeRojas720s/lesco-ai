@@ -1,6 +1,4 @@
 """
-app/cli/collect_data.py
-=======================
 
 Funcion
 -------

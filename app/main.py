@@ -1,7 +1,4 @@
 """
-app/main.py
-===========
-
 Funcion
 -------
 Ejecuta el reconocedor principal en tiempo real usando la red neuronal

@@ -1,6 +1,4 @@
 """
-app/ml/neural_sign_classifier.py
-================================
 
 Funcion
 -------

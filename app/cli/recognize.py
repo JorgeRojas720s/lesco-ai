@@ -1,6 +1,4 @@
 """
-app/cli/recognize.py
-====================
 
 Funcion
 -------

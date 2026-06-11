@@ -1,7 +1,4 @@
 """
-app/storage/dataset.py
-======================
-
 Funcion
 -------
 Administra el dataset HDF5 donde se guardan las secuencias de landmarks,

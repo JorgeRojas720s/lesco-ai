@@ -1,6 +1,4 @@
 """
-app/cli/train_neural_network.py
-===============================
 
 Funcion
 -------

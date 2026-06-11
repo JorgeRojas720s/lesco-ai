@@ -1,6 +1,4 @@
 """
-app/ml/rule_based_translator.py
-===============================
 
 Sistema basado en reglas para convertir predicciones estabilizadas en texto.
 

@@ -1,6 +1,4 @@
 """
-app/vision/preprocessor.py
-==========================
 
 Funcion
 -------

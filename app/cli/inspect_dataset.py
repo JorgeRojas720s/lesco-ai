@@ -1,6 +1,4 @@
 """
-app/cli/inspect_dataset.py
-==========================
 
 Funcion
 -------

@@ -1,7 +1,4 @@
 """
-app/ml/bayesian_filter.py
-=========================
-
 Funcion
 -------
 Acumula evidencia probabilistica de varias predicciones de la red neuronal

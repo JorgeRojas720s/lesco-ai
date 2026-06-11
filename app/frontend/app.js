@@ -1,7 +1,6 @@
 import { WebSocketRecognizer } from "./websocket_recognizer.js?v=1";
 
 /* ─────────────────────────────────────────────────────────────────────────
-   app.js · Hub web LESCO-AI
 
    Router + cámara compartida + 4 vistas:
      · Reconocer    → HUD en streaming (WebSocket /ws/predict)

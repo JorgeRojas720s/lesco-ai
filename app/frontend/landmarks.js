@@ -1,5 +1,4 @@
 /* ─────────────────────────────────────────────────────────────────────────
-   landmarks.js · Overlay de landmarks con MediaPipe Hands (solo navegador)
 
    Dibuja el esqueleto de la(s) mano(s) sobre el <canvas id="landmarks">.
    Es PURAMENTE visual y vive en el navegador: NO interviene en la lógica de

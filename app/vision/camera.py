@@ -1,7 +1,4 @@
 """
-app/vision/camera.py
-====================
-
 Funcion
 -------
 Encapsula la captura de video desde la webcam y entrega frames BGR al resto
