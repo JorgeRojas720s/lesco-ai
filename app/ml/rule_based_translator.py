@@ -1,4 +1,9 @@
 """
+<<<<<<< HEAD
+=======
+app/ml/rule_based_translator.py
+===============================
+>>>>>>> 5d45937 (add algorithm base on rules)
 
 Sistema basado en reglas para convertir predicciones estabilizadas en texto.
 
