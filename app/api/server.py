@@ -39,7 +39,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from fastapi import FastAPI, Form, UploadFile
+from fastapi import FastAPI, File, Form, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -76,6 +76,7 @@ from app.main import (
 )
 from app.ml.neural_sign_classifier import train_classifier
 from app.ml.rule_based_translator import RuleBasedTranslator, RuleDecision
+from app.services.batch_recognition import BatchRecognitionService
 from app.storage.dataset import LESCODataset
 from app.vision.hand_detector import HandDetector
 from app.vision.preprocessor import Preprocessor
@@ -253,6 +254,15 @@ class RecognizerSession:
         """Registra el resultado de una seña cerrada (en log y para el HUD)."""
         best = result.best_label
         prob = result.best_probability
+        final_accepted = (
+            result.accepted
+            and rule_decision is not None
+            and rule_decision.accepted
+        )
+        reject_reason = result.reject_reason
+        if result.accepted and rule_decision is not None and not rule_decision.accepted:
+            reject_reason = rule_decision.reason
+
         if result.accepted and rule_decision is not None and rule_decision.accepted:
             LOGGER.info(
                 "Predicción aceptada por reglas: %s (%.0f%%, texto=%r)",
@@ -276,10 +286,14 @@ class RecognizerSession:
                 result.evidence_count,
             )
         self.last_event = {
-            "accepted": result.accepted,
-            "reason": result.reject_reason,
+            "accepted": final_accepted,
+            "reason": reject_reason,
             "label": best,
             "confidence": round(prob * 100),
+            "candidates": [
+                [label, round(float(candidate_prob), 4)]
+                for label, candidate_prob in result.candidates
+            ],
             "rule_action": rule_decision.action.value if rule_decision is not None else None,
             "rule_reason": rule_decision.reason if rule_decision is not None else None,
             "ts": time.monotonic(),
@@ -312,6 +326,7 @@ class RecognizerSession:
                 "reason": self.last_event["reason"],
                 "label": self.last_event["label"],
                 "confidence": self.last_event["confidence"],
+                "candidates": self.last_event["candidates"],
                 "rule_action": self.last_event["rule_action"],
                 "rule_reason": self.last_event["rule_reason"],
             }
@@ -348,6 +363,9 @@ class RecognizerSession:
 _session: RecognizerSession | None = None
 _session_error: str | None = None
 _session_lock = threading.Lock()
+_batch_service: BatchRecognitionService | None = None
+_batch_error: str | None = None
+_batch_lock = threading.Lock()
 
 
 def get_session() -> RecognizerSession | None:
@@ -376,10 +394,61 @@ def reset_session() -> None:
 
     El próximo /predict reconstruye el modelo y las referencias del dataset.
     """
-    global _session, _session_error
+    global _session, _session_error, _batch_service, _batch_error
     with _session_lock:
         _session = None
         _session_error = None
+    with _batch_lock:
+        _batch_service = None
+        _batch_error = None
+
+
+def get_batch_service() -> BatchRecognitionService | None:
+    """Devuelve el servicio de reconocimiento por lotes, creándolo bajo demanda."""
+    global _batch_service, _batch_error
+    with _batch_lock:
+        if _batch_service is not None:
+            return _batch_service
+        if _batch_error is not None:
+            return None
+        try:
+            _batch_service = BatchRecognitionService(
+                _model_path(),
+                _dataset_path(),
+                distance_scale=_env_float("LESCO_DISTANCE_SCALE", DEFAULT_DISTANCE_SCALE),
+                min_class_distance_threshold=_env_float(
+                    "LESCO_MIN_CLASS_DISTANCE_THRESHOLD",
+                    DEFAULT_MIN_CLASS_DISTANCE_THRESHOLD,
+                ),
+                detection_confidence=_env_float("LESCO_DETECTION_CONFIDENCE", 0.5),
+                tracking_confidence=_env_float("LESCO_TRACKING_CONFIDENCE", 0.5),
+                confidence_threshold=_env_float(
+                    "LESCO_CONFIDENCE_THRESHOLD", DEFAULT_CONFIDENCE_THRESHOLD
+                ),
+                min_detected_frames=_env_int(
+                    "LESCO_MIN_DETECTED_FRAMES", DEFAULT_MIN_DETECTED_FRAMES
+                ),
+                min_detected_ratio=_env_float(
+                    "LESCO_MIN_DETECTED_RATIO", DEFAULT_MIN_DETECTED_RATIO
+                ),
+                rule_confidence_threshold=_env_float(
+                    "LESCO_RULE_CONFIDENCE_THRESHOLD",
+                    DEFAULT_RULE_CONFIDENCE_THRESHOLD,
+                ),
+                rule_min_stable_frames=_env_int(
+                    "LESCO_RULE_MIN_STABLE_FRAMES",
+                    DEFAULT_RULE_MIN_STABLE_FRAMES,
+                ),
+                rule_no_hand_timeout_s=_env_float(
+                    "LESCO_RULE_NO_HAND_TIMEOUT",
+                    DEFAULT_RULE_NO_HAND_TIMEOUT_S,
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 - se reporta al frontend
+            _batch_error = str(exc)
+            LOGGER.error("No se pudo iniciar el reconocedor batch: %s", exc)
+            return None
+        return _batch_service
 
 
 def _decode_and_process(session: RecognizerSession, data: bytes) -> dict:
@@ -427,6 +496,46 @@ async def predict(file: UploadFile) -> dict:
     data = await file.read()
     # imdecode + MediaPipe son sincronos y pesados: fuera del event loop.
     return await asyncio.to_thread(_decode_and_process, session, data)
+
+
+@app.post("/predict/batch")
+async def predict_batch(files: list[UploadFile] = File(...)) -> dict:
+    service = get_batch_service()
+    if service is None:
+        return {
+            "state": "WAITING",
+            "velocity": 0.0,
+            "motion_threshold": 0.0,
+            "error": _batch_error,
+            "result": dict(_EMPTY_RESULT),
+        }
+
+    encoded_frames = [await file.read() for file in files]
+    return await asyncio.to_thread(service.process_encoded_frames, encoded_frames)
+
+
+@app.websocket("/ws/predict")
+async def predict_ws(websocket: WebSocket) -> None:
+    await websocket.accept()
+    session = get_session()
+    if session is None:
+        await websocket.send_json({
+            "state": "WAITING",
+            "velocity": 0.0,
+            "motion_threshold": 0.0,
+            "error": _session_error,
+            "result": dict(_EMPTY_RESULT),
+        })
+        await websocket.close()
+        return
+
+    try:
+        while True:
+            data = await websocket.receive_bytes()
+            result = await asyncio.to_thread(_decode_and_process, session, data)
+            await websocket.send_json(result)
+    except WebSocketDisconnect:
+        LOGGER.info("WebSocket de reconocimiento cerrado")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
