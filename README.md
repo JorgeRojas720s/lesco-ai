@@ -68,6 +68,15 @@ app/
 
 Se abre la camara, detecta tus manos con MediaPipe y usa el modelo entrenado
 `models/neural_sign_classifier.npz` para mostrar la palabra mas probable.
+El flujo de decision es:
+
+```text
+Red neuronal -> filtro Bayesiano -> sistema basado en reglas -> texto
+```
+
+Las reglas aceptan o ignoran predicciones estabilizadas, cierran palabra si la
+mano desaparece por mas de 1 segundo y dejan preparado el uso de reglas por
+dedos como pulgar extendido = `BIEN` o todos los dedos extendidos = `ALTO`.
 
 Presioná `Q` para cerrar la ventana.
 
@@ -107,6 +116,9 @@ LESCO_DATASET=data/signs_dataset.h5             # ruta del dataset
 LESCO_MIN_CLASS_DISTANCE_THRESHOLD=4.0          # afloja validación de distancia
 LESCO_MIN_DETECTED_RATIO=0.30                   # exige menos "mano detectada"
 LESCO_CONFIDENCE_THRESHOLD=0.6                  # baja el umbral de confianza
+LESCO_RULE_CONFIDENCE_THRESHOLD=0.7             # umbral de reglas para agregar texto
+LESCO_RULE_MIN_STABLE_FRAMES=10                 # frames minimos para aceptar una sena
+LESCO_RULE_NO_HAND_TIMEOUT=1.0                  # segundos sin mano para cerrar palabra
 ```
 
 > Si regrabás el dataset por la web y re-entrenás, normalmente no hace falta
