@@ -30,6 +30,7 @@ const backBtn = document.getElementById("back-btn");
 const statusTextEl = document.getElementById("status-text");
 const fpsEl = document.getElementById("fps");
 const perfBtn = document.getElementById("perf-btn");
+const voiceBtn = document.getElementById("voice-btn");
 
 // Reconocer
 const predictionEl = document.getElementById("prediction");
@@ -219,6 +220,7 @@ function handleResponse(data) {
         showPrediction(result);
         if (!acceptedActive) {
             addToHistory(result.label);
+            speakWord(result.label);
             burstParticles();
             predictionBox.classList.remove("pop");
             void predictionBox.offsetWidth;
@@ -406,6 +408,45 @@ function render(now) {
     if (currentView === "recognize") drawRadar();
     if (isCamera && !liteMode) updateParticles();
     requestAnimationFrame(render);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// VOZ (Web Speech API)
+//
+// Dice en voz alta cada seña aceptada. En Windows usa las mismas voces SAPI
+// del sistema (p. ej. Microsoft Sabina/Helena), sin tocar el backend. Es
+// prácticamente gratis en CPU: la síntesis la hace el sistema operativo.
+// ═════════════════════════════════════════════════════════════════════════════
+let voiceOn = localStorage.getItem("lesco-voice") !== "0"; // activada por defecto
+let spanishVoice = null;
+
+function pickVoice() {
+    if (!window.speechSynthesis) return;
+    const voices = speechSynthesis.getVoices();
+    // Preferir una voz en español; si no hay, se usa la default del sistema.
+    spanishVoice = voices.find((v) => /^es/i.test(v.lang || "")) || null;
+}
+if (window.speechSynthesis) {
+    pickVoice();
+    // Las voces cargan de forma asíncrona en Chrome/Edge.
+    speechSynthesis.onvoiceschanged = pickVoice;
+}
+
+function speakWord(label) {
+    if (!voiceOn || !label || !window.speechSynthesis) return;
+    const text = label.replace(/_/g, " ").toLowerCase();
+    speechSynthesis.cancel(); // si llegan señas seguidas, no encolar
+    const u = new SpeechSynthesisUtterance(text);
+    if (spanishVoice) u.voice = spanishVoice;
+    u.lang = (spanishVoice && spanishVoice.lang) || "es-ES";
+    speechSynthesis.speak(u);
+}
+
+function updateVoiceBtn() {
+    voiceBtn.textContent = voiceOn ? "🔊 VOZ" : "🔇 VOZ";
+    voiceBtn.title = voiceOn
+        ? "Voz activada: dice cada seña detectada (clic para silenciar)"
+        : "Voz silenciada (clic para activar)";
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -691,8 +732,17 @@ perfBtn.addEventListener("click", () => {
     applyLite(!liteMode);
     localStorage.setItem("lesco-lite", liteMode ? "1" : "0");
 });
+voiceBtn.addEventListener("click", () => {
+    voiceOn = !voiceOn;
+    localStorage.setItem("lesco-voice", voiceOn ? "1" : "0");
+    updateVoiceBtn();
+    // Feedback inmediato; además el clic desbloquea el audio del navegador.
+    if (voiceOn) speakWord("voz activada");
+    else if (window.speechSynthesis) speechSynthesis.cancel();
+});
 
 refreshAccentCache();
+updateVoiceBtn();
 applyLite(localStorage.getItem("lesco-lite") === "1");
 requestAnimationFrame(render);
 setView("menu");
