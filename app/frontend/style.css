@@ -110,8 +110,21 @@ video { transform: scaleX(-1); background: #000; }
 @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
 .fps { font-family: var(--mono); font-size: 13px; color: var(--accent); letter-spacing: 1px; opacity: 0.85; }
 
-/* Status/FPS solo tienen sentido en vistas de cámara */
-body:not([data-view="recognize"]):not([data-view="collect"]) .hud-top__right { display: none; }
+.perf-btn {
+    pointer-events: auto;
+    background: rgba(var(--accent-rgb),0.1);
+    border: 1px solid var(--panel-border);
+    color: var(--accent);
+    font-family: var(--mono); font-size: 11px; letter-spacing: 1px;
+    padding: 5px 10px; border-radius: 8px; cursor: pointer;
+    transition: background 0.2s ease;
+}
+.perf-btn:hover { background: rgba(var(--accent-rgb),0.2); }
+
+/* Status/FPS solo tienen sentido en vistas de cámara; el botón de modo
+   ligero queda visible siempre para que sea fácil de encontrar. */
+body:not([data-view="recognize"]):not([data-view="collect"]) .hud-top__right .status,
+body:not([data-view="recognize"]):not([data-view="collect"]) .hud-top__right .fps { display: none; }
 
 /* ── Vistas overlay (recognize / collect) ─────────────────────────────── */
 
@@ -296,3 +309,28 @@ body:not([data-view="recognize"]):not([data-view="collect"]) .hud-top__right { d
     .menu-grid { grid-template-columns: 1fr; }
     .panel { width: 200px; }
 }
+
+/* ── Modo ligero (laptops de bajos recursos) ──────────────────────────────
+   Apaga los efectos más caros para la GPU/CPU: backdrop-filter sobre video
+   en vivo, la scanline animada a pantalla completa, glows y animaciones
+   decorativas. La funcionalidad queda intacta. */
+
+body.lite .panel,
+body.lite .prediction-box,
+body.lite .toast,
+body.lite .menu-card,
+body.lite .card-page { backdrop-filter: none; }
+
+body.lite .scanline { display: none; }
+body.lite #particles { display: none; }
+
+body.lite .corner { animation: none; filter: none; opacity: 0.7; }
+body.lite .status-dot { animation: none; box-shadow: none; }
+
+body.lite .logo,
+body.lite .menu-title,
+body.lite .prediction-label { text-shadow: none; }
+
+body.lite .cbar__fill,
+body.lite .btn--accent,
+body.lite .bar-cell > span { box-shadow: none; }

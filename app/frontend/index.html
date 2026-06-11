@@ -4,7 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LESCO-AI</title>
-    <link rel="stylesheet" href="style.css">
+    <!-- ?v= fuerza al navegador a descargar la versión nueva tras cada cambio -->
+    <link rel="stylesheet" href="style.css?v=2">
 </head>
 <body class="state-waiting" data-view="menu">
 
@@ -38,6 +39,7 @@
             <span id="status-text">Listo</span>
         </div>
         <div class="fps" id="fps">-- FPS</div>
+        <button id="perf-btn" class="perf-btn" title="Alternar modo ligero">✦ COMPLETO</button>
     </div>
 </header>
 
@@ -123,8 +125,10 @@
     </div>
 
     <div class="countdown hidden" id="countdown">3</div>
-    <div class="toast hidden" id="collect-toast"></div>
 </section>
+
+<!-- Toast global (avisos de grabación y de modo ligero; es position:fixed) -->
+<div class="toast hidden" id="collect-toast"></div>
 
 <!-- ───────────── VISTA: ENTRENAR ───────────── -->
 <section class="view view--page hidden" data-view="train">
@@ -158,7 +162,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/hands.js" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3/drawing_utils.js" crossorigin="anonymous"></script>
 
-<script src="landmarks.js"></script>
-<script src="app.js"></script>
+<script src="landmarks.js?v=2"></script>
+<script src="app.js?v=2"></script>
 </body>
 </html>

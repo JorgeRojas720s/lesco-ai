@@ -13,8 +13,11 @@
 // ── Constantes de captura ───────────────────────────────────────────────────
 const TARGET_FPS = 30;
 const TARGET_INTERVAL_MS = 1000 / TARGET_FPS;
-const SEND_WIDTH = 960;
-const SEND_QUALITY = 0.85;
+// En modo ligero se manda un JPEG más chico y de menor calidad. MediaPipe
+// trabaja internamente a baja resolución, así que no afecta la precisión del
+// reconocimiento; sí baja mucho el costo de encode en canvas y de detección.
+const SEND_FULL = { width: 960, quality: 0.85 };
+const SEND_LITE = { width: 640, quality: 0.7 };
 const HISTORY_MAX = 8;
 
 // ── DOM compartido ──────────────────────────────────────────────────────────
@@ -26,6 +29,7 @@ const radarCanvas = document.getElementById("radar");
 const backBtn = document.getElementById("back-btn");
 const statusTextEl = document.getElementById("status-text");
 const fpsEl = document.getElementById("fps");
+const perfBtn = document.getElementById("perf-btn");
 
 // Reconocer
 const predictionEl = document.getElementById("prediction");
@@ -69,11 +73,12 @@ const grabCtx = grabCanvas.getContext("2d");
 function captureBlob() {
     return new Promise((resolve) => {
         if (!video.videoWidth) return resolve(null);
-        const scale = SEND_WIDTH / video.videoWidth;
-        grabCanvas.width = SEND_WIDTH;
+        const send = liteMode ? SEND_LITE : SEND_FULL;
+        const scale = send.width / video.videoWidth;
+        grabCanvas.width = send.width;
         grabCanvas.height = Math.round(video.videoHeight * scale);
         grabCtx.drawImage(video, 0, 0, grabCanvas.width, grabCanvas.height);
-        grabCanvas.toBlob((b) => resolve(b), "image/jpeg", SEND_QUALITY);
+        grabCanvas.toBlob((b) => resolve(b), "image/jpeg", send.quality);
     });
 }
 
@@ -88,7 +93,11 @@ let cameraReady = false;
 let cameraStarting = null;
 
 function ensureCamera() {
-    if (cameraReady) return Promise.resolve();
+    if (cameraReady) {
+        // El video se pausa al salir de las vistas con cámara: reanudar.
+        if (video.paused) video.play().catch(() => {});
+        return Promise.resolve();
+    }
     if (cameraStarting) return cameraStarting;
     cameraStarting = (async () => {
         try {
@@ -120,6 +129,12 @@ function setView(name) {
     const isCamera = name === "recognize" || name === "collect";
     stage.classList.toggle("hidden", !isCamera);
     backBtn.classList.toggle("hidden", name === "menu");
+
+    // El overlay de landmarks (MediaPipe en el navegador) y el <video> solo
+    // trabajan cuando la cámara está en pantalla; fuera de ahí es CPU tirada.
+    if (window.LescoLandmarks) window.LescoLandmarks.setActive(isCamera);
+    if (!isCamera && cameraReady && !video.paused) video.pause();
+    lowFpsStreak = 0;
 
     // Detener loops activos
     recognizeRunning = false;
@@ -270,12 +285,23 @@ function setTheme(name) {
     if (document.body.classList.contains(cls)) return;
     document.body.classList.remove("state-waiting", "state-signing", "state-accepted");
     document.body.classList.add(cls);
+    refreshAccentCache();
+    if (window.LescoLandmarks) window.LescoLandmarks.refreshAccent();
 }
 
 // ── Helpers de color ──────────────────────────────────────────────────────────
-function cssVar(n) { return getComputedStyle(document.body).getPropertyValue(n).trim(); }
-function accentRGB() { return cssVar("--accent-rgb") || "0, 229, 255"; }
-function accentHex() { return cssVar("--accent") || "#00e5ff"; }
+// getComputedStyle por frame fuerza recálculo de estilos (caro en equipos
+// lentos): el acento se cachea y se refresca solo al cambiar de tema.
+let accentCache = { rgb: "0, 229, 255", hex: "#00e5ff" };
+function refreshAccentCache() {
+    const cs = getComputedStyle(document.body);
+    accentCache = {
+        rgb: cs.getPropertyValue("--accent-rgb").trim() || "0, 229, 255",
+        hex: cs.getPropertyValue("--accent").trim() || "#00e5ff",
+    };
+}
+function accentRGB() { return accentCache.rgb; }
+function accentHex() { return accentCache.hex; }
 
 // ── Partículas ────────────────────────────────────────────────────────────────
 const pCtx = particlesCanvas.getContext("2d");
@@ -354,7 +380,9 @@ function drawRadar() {
     const ratio = Math.max(0, Math.min(1, hud.velocity / ((hud.motionThreshold || 0.03) * 3)));
     rCtx.beginPath(); rCtx.arc(cx, cy, R * ratio, 0, Math.PI * 2);
     rCtx.fillStyle = `rgba(${rgb}, 0.18)`; rCtx.fill();
-    rCtx.lineWidth = 2; rCtx.strokeStyle = hex; rCtx.shadowBlur = 12; rCtx.shadowColor = hex;
+    rCtx.lineWidth = 2; rCtx.strokeStyle = hex;
+    // shadowBlur es de lo más caro de canvas 2D: solo en modo completo.
+    if (!liteMode) { rCtx.shadowBlur = 12; rCtx.shadowColor = hex; }
     rCtx.stroke(); rCtx.shadowBlur = 0;
 
     sweep += 0.06;
@@ -365,19 +393,62 @@ function drawRadar() {
     rCtx.beginPath(); rCtx.moveTo(cx, cy); rCtx.lineTo(sx, sy); rCtx.stroke();
 }
 
-// ── Loop de render (FPS + radar + partículas), siempre activo ─────────────────
+// ── Loop de render (FPS + radar + partículas) ────────────────────────────────
+// El trabajo pesado (radar, partículas) solo corre en las vistas que lo
+// muestran; en modo ligero las partículas se apagan del todo.
 let frameCount = 0, lastFpsTime = performance.now();
 
 function render(now) {
+    const isCamera = currentView === "recognize" || currentView === "collect";
     frameCount++;
     if (now - lastFpsTime >= 500) {
-        fpsEl.textContent = Math.round((frameCount * 1000) / (now - lastFpsTime)) + " FPS";
+        const fps = Math.round((frameCount * 1000) / (now - lastFpsTime));
         frameCount = 0;
         lastFpsTime = now;
+        if (isCamera) {
+            fpsEl.textContent = fps + " FPS";
+            trackAutoLite(fps);
+        }
     }
-    drawRadar();
-    updateParticles();
+    if (currentView === "recognize") drawRadar();
+    if (isCamera && !liteMode) updateParticles();
     requestAnimationFrame(render);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// MODO LIGERO (laptops de bajos recursos)
+//
+// Apaga lo puramente cosmético: overlay de landmarks del navegador, partículas,
+// glows de canvas y efectos CSS caros (backdrop-filter, scanline), y manda
+// frames más chicos al backend. No toca la lógica de reconocimiento.
+// ═════════════════════════════════════════════════════════════════════════════
+let liteMode = false;
+let lowFpsStreak = 0;
+let autoLiteAllowed = localStorage.getItem("lesco-lite") === null;
+
+function applyLite(on) {
+    liteMode = on;
+    document.body.classList.toggle("lite", on);
+    if (perfBtn) {
+        perfBtn.textContent = on ? "⚡ LIGERO" : "✦ COMPLETO";
+        perfBtn.title = on
+            ? "Modo ligero activo: efectos apagados para mejor FPS (clic para volver)"
+            : "Clic para modo ligero (mejor FPS en equipos modestos)";
+    }
+    if (window.LescoLandmarks) window.LescoLandmarks.setLite(on);
+    if (on) pCtx.clearRect(0, 0, particlesCanvas.width, particlesCanvas.height);
+}
+
+// Si el FPS se mantiene bajo unos segundos en una vista con cámara, se activa
+// solo (salvo que el usuario ya haya elegido un modo manualmente).
+function trackAutoLite(fps) {
+    if (liteMode || !autoLiteAllowed) return;
+    lowFpsStreak = fps < 20 ? lowFpsStreak + 1 : 0;
+    if (lowFpsStreak >= 8) { // ~4 s sostenidos por debajo de 20 FPS
+        autoLiteAllowed = false;
+        applyLite(true);
+        toast("⚡ Modo ligero activado (FPS bajo)", "ok");
+    }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -622,6 +693,13 @@ stopBtn.addEventListener("click", () => finishRecording(true));
 discardBtn.addEventListener("click", () => finishRecording(false));
 trainStartBtn.addEventListener("click", startTraining);
 inspectRefreshBtn.addEventListener("click", loadInspect);
+perfBtn.addEventListener("click", () => {
+    autoLiteAllowed = false; // elección manual: no volver a auto-activar
+    applyLite(!liteMode);
+    localStorage.setItem("lesco-lite", liteMode ? "1" : "0");
+});
 
+refreshAccentCache();
+applyLite(localStorage.getItem("lesco-lite") === "1");
 requestAnimationFrame(render);
 setView("menu");
