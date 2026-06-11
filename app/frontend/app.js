@@ -30,6 +30,7 @@ const fpsEl = document.getElementById("fps");
 // Reconocer
 const predictionEl = document.getElementById("prediction");
 const confidenceEl = document.getElementById("confidence");
+const translationTextEl = document.getElementById("translation-text");
 const barsEl = document.getElementById("confidence-bars");
 const motionLabelEl = document.getElementById("motion-label");
 const historyEl = document.getElementById("history");
@@ -181,6 +182,8 @@ function handleResponse(data) {
     }
 
     const result = data.result || {};
+    const translation = data.translation || {};
+    renderTranslation(translation.text || "");
     hud.accepted = !!result.accepted;
 
     if (hud.accepted) setTheme("accepted");
@@ -226,6 +229,10 @@ function clearPrediction() {
     predictionEl.textContent = "---";
     confidenceEl.textContent = "0%";
     barsEl.innerHTML = "";
+}
+
+function renderTranslation(text) {
+    translationTextEl.textContent = text || "";
 }
 
 function renderBars(candidates) {

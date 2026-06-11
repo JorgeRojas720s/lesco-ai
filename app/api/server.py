@@ -63,6 +63,9 @@ from app.main import (
     DEFAULT_MODEL_PATH,
     DEFAULT_MOTION_THRESHOLD,
     DEFAULT_RESULT_HOLD_S,
+    DEFAULT_RULE_CONFIDENCE_THRESHOLD,
+    DEFAULT_RULE_MIN_STABLE_FRAMES,
+    DEFAULT_RULE_NO_HAND_TIMEOUT_S,
     DEFAULT_SILENCE_FRAMES,
     DEFAULT_TOP_K,
     MotionSegmenter,
@@ -72,6 +75,7 @@ from app.main import (
     load_model,
 )
 from app.ml.neural_sign_classifier import train_classifier
+from app.ml.rule_based_translator import RuleBasedTranslator, RuleDecision
 from app.storage.dataset import LESCODataset
 from app.vision.hand_detector import HandDetector
 from app.vision.preprocessor import Preprocessor
@@ -162,6 +166,20 @@ class RecognizerSession:
             min_sign_frames=_env_int("LESCO_MIN_SIGN_FRAMES", DEFAULT_MIN_SIGN_FRAMES),
             max_sign_frames=_env_int("LESCO_MAX_SIGN_FRAMES", DEFAULT_MAX_SIGN_FRAMES),
         )
+        self.translator = RuleBasedTranslator(
+            confidence_threshold=_env_float(
+                "LESCO_RULE_CONFIDENCE_THRESHOLD",
+                DEFAULT_RULE_CONFIDENCE_THRESHOLD,
+            ),
+            min_stable_frames=_env_int(
+                "LESCO_RULE_MIN_STABLE_FRAMES",
+                DEFAULT_RULE_MIN_STABLE_FRAMES,
+            ),
+            no_hand_timeout_s=_env_float(
+                "LESCO_RULE_NO_HAND_TIMEOUT",
+                DEFAULT_RULE_NO_HAND_TIMEOUT_S,
+            ),
+        )
         self.confidence_threshold = _env_float(
             "LESCO_CONFIDENCE_THRESHOLD", DEFAULT_CONFIDENCE_THRESHOLD
         )
@@ -188,6 +206,7 @@ class RecognizerSession:
             frame_bgr = self.preprocessor.process(frame_bgr)
             detection = self.detector.detect(frame_bgr)
             features, hand_detected = frame_to_features(detection)
+            self.translator.update_hand_presence(hand_detected)
 
             if self.segmenter.update(features, hand_detected):
                 frames, detected = self.segmenter.get_sequence()
@@ -204,10 +223,17 @@ class RecognizerSession:
                     DEFAULT_BAYES_SMOOTHING,
                     DEFAULT_BAYES_MIN_EVIDENCE,
                 )
-                self.segmenter.reset()
-                self._record_event(result)
-
+                rule_decision = None
                 if result.accepted:
+                    rule_decision = self.translator.apply_prediction(
+                        result.best_label,
+                        result.best_probability,
+                        stable_frames=len(frames),
+                    )
+                self.segmenter.reset()
+                self._record_event(result, rule_decision)
+
+                if result.accepted and rule_decision is not None and rule_decision.accepted:
                     self.current_result = result
                     self.result_expires = time.monotonic() + DEFAULT_RESULT_HOLD_S
                 else:
@@ -219,12 +245,28 @@ class RecognizerSession:
 
             return self._serialize()
 
-    def _record_event(self, result: RecognitionResult) -> None:
+    def _record_event(
+        self,
+        result: RecognitionResult,
+        rule_decision: RuleDecision | None,
+    ) -> None:
         """Registra el resultado de una seña cerrada (en log y para el HUD)."""
         best = result.best_label
         prob = result.best_probability
-        if result.accepted:
-            LOGGER.info("Predicción aceptada: %s (%.0f%%)", best, prob * 100)
+        if result.accepted and rule_decision is not None and rule_decision.accepted:
+            LOGGER.info(
+                "Predicción aceptada por reglas: %s (%.0f%%, texto=%r)",
+                best,
+                prob * 100,
+                self.translator.text,
+            )
+        elif result.accepted and rule_decision is not None:
+            LOGGER.info(
+                "Predicción ignorada por reglas: %s (%.0f%%, %s)",
+                best,
+                prob * 100,
+                rule_decision.reason,
+            )
         else:
             candidate = f"{best} {prob * 100:.0f}%" if result.candidates else "sin candidato"
             LOGGER.info(
@@ -238,6 +280,8 @@ class RecognizerSession:
             "reason": result.reject_reason,
             "label": best,
             "confidence": round(prob * 100),
+            "rule_action": rule_decision.action.value if rule_decision is not None else None,
+            "rule_reason": rule_decision.reason if rule_decision is not None else None,
             "ts": time.monotonic(),
         }
 
@@ -268,6 +312,8 @@ class RecognizerSession:
                 "reason": self.last_event["reason"],
                 "label": self.last_event["label"],
                 "confidence": self.last_event["confidence"],
+                "rule_action": self.last_event["rule_action"],
+                "rule_reason": self.last_event["rule_reason"],
             }
 
         return {
@@ -275,6 +321,24 @@ class RecognizerSession:
             "velocity": round(self.segmenter.current_velocity, 5),
             "motion_threshold": self.segmenter.motion_threshold,
             "result": result_payload,
+            "translation": {
+                "text": self.translator.text,
+                "action": (
+                    self.translator.last_decision.action.value
+                    if self.translator.last_decision is not None
+                    else None
+                ),
+                "label": (
+                    self.translator.last_decision.label
+                    if self.translator.last_decision is not None
+                    else ""
+                ),
+                "reason": (
+                    self.translator.last_decision.reason
+                    if self.translator.last_decision is not None
+                    else None
+                ),
+            },
             "info": info,
         }
 

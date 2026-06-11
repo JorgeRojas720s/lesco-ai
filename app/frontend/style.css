@@ -171,6 +171,10 @@ body:not([data-view="recognize"]):not([data-view="collect"]) .hud-top__right { d
 
 .prediction-label { font-size: 54px; font-weight: 800; letter-spacing: 1px; color: var(--accent); text-shadow: 0 0 22px var(--glow); transition: color 0.6s ease, text-shadow 0.6s ease; line-height: 1.1; }
 .prediction-confidence { margin-top: 6px; font-family: var(--mono); font-size: 18px; color: var(--text-dim); }
+.translation-text {
+    min-height: 24px; margin-top: 10px; color: #eef6fb; font-size: 18px; line-height: 1.35;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 
 .confidence-bars { margin-top: 16px; display: flex; flex-direction: column; gap: 7px; }
 .cbar { display: grid; grid-template-columns: 110px 1fr 44px; align-items: center; gap: 10px; font-size: 13px; }

@@ -54,6 +54,7 @@ import numpy as np
 from app.cli.collect_data import FEATURES_PER_FRAME, frame_to_features, smart_resample
 from app.ml.bayesian_filter import BayesianSignFilter
 from app.ml.neural_sign_classifier import NeuralSignClassifier
+from app.ml.rule_based_translator import RuleBasedTranslator
 from app.vision.camera import Camera
 from app.vision.hand_detector import HandDetector
 from app.vision.preprocessor import Preprocessor
@@ -76,6 +77,9 @@ DEFAULT_DISTANCE_SCALE = 1.5
 DEFAULT_MIN_CLASS_DISTANCE_THRESHOLD = 1.20
 DEFAULT_BAYES_SMOOTHING = 0.15
 DEFAULT_BAYES_MIN_EVIDENCE = 3
+DEFAULT_RULE_CONFIDENCE_THRESHOLD = 0.70
+DEFAULT_RULE_MIN_STABLE_FRAMES = 10
+DEFAULT_RULE_NO_HAND_TIMEOUT_S = 1.0
 
 _C_GREEN = (0, 210, 80)
 _C_RED = (0, 40, 220)
@@ -263,6 +267,24 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=DEFAULT_BAYES_MIN_EVIDENCE,
         help="Cantidad minima de predicciones temporales antes de aceptar una sena.",
+    )
+    parser.add_argument(
+        "--rule-confidence-threshold",
+        type=float,
+        default=DEFAULT_RULE_CONFIDENCE_THRESHOLD,
+        help="Confianza minima para que el sistema de reglas agregue la sena al texto.",
+    )
+    parser.add_argument(
+        "--rule-min-stable-frames",
+        type=int,
+        default=DEFAULT_RULE_MIN_STABLE_FRAMES,
+        help="Frames minimos de la toma para que las reglas acepten la sena.",
+    )
+    parser.add_argument(
+        "--rule-no-hand-timeout",
+        type=float,
+        default=DEFAULT_RULE_NO_HAND_TIMEOUT_S,
+        help="Segundos sin mano detectada para cerrar la palabra actual.",
     )
     return parser.parse_args()
 
@@ -543,6 +565,7 @@ def draw_hud(
     result: RecognitionResult | None,
     result_expires: float,
     frame_counter: int,
+    translated_text: str = "",
 ) -> None:
     h, w = frame.shape[:2]
     now = time.monotonic()
@@ -560,7 +583,7 @@ def draw_hud(
     else:
         _text(frame, "ESPERANDO SENA", (12, 30), 0.75, _C_GRAY, 2)
 
-    _text(frame, "Modelo: red neuronal + Bayes", (12, 84), 0.5, _C_CYAN)
+    _text(frame, "Modelo: red neuronal + Bayes + reglas", (12, 84), 0.5, _C_CYAN)
     _text(frame, "Q: salir", (w - 90, 30), 0.5, _C_GRAY)
 
     bar_y = 90
@@ -608,6 +631,13 @@ def draw_hud(
         (tw, _), _ = cv2.getTextSize(msg, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)
         _text(frame, msg, ((w - tw) // 2, h - 20), 0.6, _C_CYAN)
 
+    if translated_text:
+        panel = frame.copy()
+        cv2.rectangle(panel, (0, h - 58), (w, h), _C_BLACK, -1)
+        cv2.addWeighted(panel, 0.52, frame, 0.48, 0, frame)
+        display_text = translated_text[-60:]
+        _text(frame, f"Texto: {display_text}", (12, h - 22), 0.62, _C_WHITE, 2)
+
 
 def main() -> None:
     args = parse_args()
@@ -630,6 +660,11 @@ def main() -> None:
         min_sign_frames=args.min_sign_frames,
         max_sign_frames=args.max_sign_frames,
     )
+    translator = RuleBasedTranslator(
+        confidence_threshold=args.rule_confidence_threshold,
+        min_stable_frames=args.rule_min_stable_frames,
+        no_hand_timeout_s=args.rule_no_hand_timeout,
+    )
 
     current_result: RecognitionResult | None = None
     result_expires = 0.0
@@ -645,6 +680,7 @@ def main() -> None:
                 annotated = detector.draw(frame_bgr, detection)
 
                 features, hand_detected = frame_to_features(detection)
+                translator.update_hand_presence(hand_detected)
                 if segmenter.update(features, hand_detected):
                     frames, detected = segmenter.get_sequence()
                     result = classify_sequence(
@@ -660,18 +696,26 @@ def main() -> None:
                         args.bayes_smoothing,
                         args.bayes_min_evidence,
                     )
+                    rule_decision = None
+                    if result.accepted:
+                        rule_decision = translator.apply_prediction(
+                            result.best_label,
+                            result.best_probability,
+                            stable_frames=len(frames),
+                        )
                     segmenter.reset()
 
-                    if result.accepted:
+                    if result.accepted and rule_decision is not None and rule_decision.accepted:
                         current_result = result
                         result_expires = time.monotonic() + args.result_hold
                         LOGGER.info(
-                            "Prediccion aceptada: %s (%.1f%%, dist %.3f/%.3f, evidencias=%d)",
+                            "Prediccion aceptada por reglas: %s (%.1f%%, dist %.3f/%.3f, evidencias=%d, texto=%r)",
                             result.best_label,
                             result.best_probability * 100,
                             result.distance,
                             result.distance_threshold,
                             result.evidence_count,
+                            translator.text,
                         )
                     else:
                         current_result = None
@@ -681,11 +725,17 @@ def main() -> None:
                             if result.candidates
                             else "sin candidato"
                         )
+                        rule_reason = (
+                            f" Regla: {rule_decision.reason}."
+                            if rule_decision is not None and rule_decision.reason
+                            else ""
+                        )
                         LOGGER.info(
-                            "Movimiento rechazado: %s (%s, evidencias=%d).",
+                            "Movimiento rechazado: %s (%s, evidencias=%d).%s",
                             result.reject_reason,
                             candidate_text,
                             result.evidence_count,
+                            rule_reason,
                         )
 
                 if current_result is not None and time.monotonic() >= result_expires:
@@ -697,6 +747,7 @@ def main() -> None:
                     current_result,
                     result_expires,
                     frame_counter,
+                    translator.text,
                 )
 
                 cv2.imshow("LESCO-AI Neural Recognizer", annotated)
